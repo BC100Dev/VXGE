@@ -10,6 +10,7 @@
 #include "VXMonitor.hpp"
 #include "VXWindow.hpp"
 #include "VXRenderer.hpp"
+#include "VXHaptic.hpp"
 
 namespace VX {
     class VXEngine {
@@ -22,6 +23,7 @@ namespace VX {
 
         std::vector<VXGraphics> EnumerateGraphicsCards();
         std::vector<VXMonitor> EnumerateMonitors();
+        std::vector<VXHaptic> EnumerateHapticDevices();
 
         VXWindow CreateWindow(const std::string& title, const VXMonitor& monitor, VXFlags flags);
         VXRenderer CreateRenderer(VXWindow& window, VXGraphics& graphics, VXFlags flags);
@@ -30,6 +32,11 @@ namespace VX {
         void LockWindowContext();
         void DestroyWindow(VXWindow& window);
         void DestroyRenderer(VXRenderer& renderer);
+
+        float DeltaTime() const;
+        void  TickTime();
+
+        bool VulkanLoggingEnabled = false;
 
     private:
         std::string m_appName;

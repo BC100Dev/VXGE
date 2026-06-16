@@ -3,7 +3,12 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include <chrono>
+
 namespace VX {
+    static auto vx_lastTime = std::chrono::high_resolution_clock::now();
+    static float vx_deltaTime = 0.0f;
+
     const std::vector<const char*> VXEngine::VALIDATION_LAYERS = {
         "VK_LAYER_KHRONOS_validation"
     };
@@ -17,7 +22,7 @@ namespace VX {
     }
 
     bool VXEngine::Initialize() {
-        if (!SDL_Init(SDL_INIT_VIDEO)) {
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC | SDL_INIT_JOYSTICK)) {
             SetLastError(VXError(SDL_GetError()));
             return false;
         }
@@ -130,5 +135,30 @@ namespace VX {
 
     void VXEngine::DestroyRenderer(VXRenderer& renderer) {
         renderer.Destroy();
+    }
+
+    std::vector<VXHaptic> VXEngine::EnumerateHapticDevices() {
+        std::vector<VXHaptic> devices;
+
+        int count = 0;
+        SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+        if (!joysticks) return devices;
+
+        for (int i = 0; i < count; i++)
+            if (SDL_IsJoystickHaptic(SDL_OpenJoystick(joysticks[i])))
+                devices.emplace_back(joysticks[i]);
+
+        SDL_free(joysticks);
+        return devices;
+    }
+
+    void VXEngine::TickTime() {
+        auto now = std::chrono::high_resolution_clock::now();
+        vx_deltaTime = std::chrono::duration<float>(now - vx_lastTime).count();
+        vx_lastTime = now;
+    }
+
+    float VXEngine::DeltaTime() const {
+        return vx_deltaTime;
     }
 }

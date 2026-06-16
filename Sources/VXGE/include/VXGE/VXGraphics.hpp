@@ -13,6 +13,11 @@ namespace VX {
         explicit VXGraphics(VkPhysicalDevice physicalDevice);
         ~VXGraphics();
 
+        VXGraphics(const VXGraphics&)            = delete;
+        VXGraphics& operator=(const VXGraphics&) = delete;
+        VXGraphics(VXGraphics&& other) noexcept;
+        VXGraphics& operator=(VXGraphics&& other) noexcept;
+
         const std::string& DeviceName() const;
         VkPhysicalDevice PhysicalDevice() const;
         VkDevice Device() const;

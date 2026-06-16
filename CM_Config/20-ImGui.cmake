@@ -5,11 +5,11 @@ add_library(imgui SHARED
         "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/imgui_widgets.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/imgui_demo.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/backends/imgui_impl_sdl3.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/backends/imgui_impl_sdlrenderer3.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/backends/imgui_impl_vulkan.cpp"
 )
 
 target_include_directories(imgui PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui"
         "${CMAKE_CURRENT_SOURCE_DIR}/External/imgui/backends")
 
-target_link_libraries(imgui PUBLIC SDL3::SDL3)
+target_link_libraries(imgui PUBLIC SDL3::SDL3 vulkan)

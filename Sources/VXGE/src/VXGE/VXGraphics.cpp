@@ -2,6 +2,7 @@
 #include <VXGE/VXError.hpp>
 
 #include <cstring>
+#include <iostream>
 #include <vector>
 
 namespace VX {
@@ -24,8 +25,10 @@ namespace VX {
     }
 
     VXGraphics::~VXGraphics() {
-        if (m_device != VK_NULL_HANDLE)
+        if (m_device != VK_NULL_HANDLE) {
             vkDestroyDevice(m_device, nullptr);
+            m_device = VK_NULL_HANDLE;
+        }
     }
 
     bool VXGraphics::findQueueFamilies() {
@@ -34,23 +37,14 @@ namespace VX {
         std::vector<VkQueueFamilyProperties> families(count);
         vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &count, families.data());
 
-        bool foundGraphics = false, foundPresent = false;
-
         for (uint32_t i = 0; i < count; i++) {
             if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 m_graphicsFamily = i;
-                foundGraphics = true;
+                m_presentFamily  = i;
+                return true;
             }
-
-            VkBool32 presentSupport = false;
-            vkGetPhysicalDeviceSurfaceSupportKHR(m_physicalDevice, i, VK_NULL_HANDLE, &presentSupport);
-            if (presentSupport) {
-                m_presentFamily = i;
-                foundPresent = true;
-            }
-
-            if (foundGraphics && foundPresent) return true;
         }
+
         return false;
     }
 
@@ -111,5 +105,32 @@ namespace VX {
 
     uint32_t VXGraphics::PresentFamily() const {
         return m_presentFamily;
+    }
+
+    VXGraphics::VXGraphics(VXGraphics&& other) noexcept
+    : m_physicalDevice(other.m_physicalDevice),
+      m_device(other.m_device),
+      m_graphicsQueue(other.m_graphicsQueue),
+      m_presentQueue(other.m_presentQueue),
+      m_graphicsFamily(other.m_graphicsFamily),
+      m_presentFamily(other.m_presentFamily),
+      m_deviceName(std::move(other.m_deviceName)) {
+        other.m_device = VK_NULL_HANDLE;
+    }
+
+    VXGraphics& VXGraphics::operator=(VXGraphics&& other) noexcept {
+        if (this != &other) {
+            if (m_device != VK_NULL_HANDLE)
+                vkDestroyDevice(m_device, nullptr);
+            m_physicalDevice = other.m_physicalDevice;
+            m_device         = other.m_device;
+            m_graphicsQueue  = other.m_graphicsQueue;
+            m_presentQueue   = other.m_presentQueue;
+            m_graphicsFamily = other.m_graphicsFamily;
+            m_presentFamily  = other.m_presentFamily;
+            m_deviceName     = std::move(other.m_deviceName);
+            other.m_device   = VK_NULL_HANDLE;
+        }
+        return *this;
     }
 }

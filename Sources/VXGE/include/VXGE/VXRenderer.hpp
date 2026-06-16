@@ -3,11 +3,23 @@
 
 #include <vulkan/vulkan.h>
 #include <vector>
+#include <string>
 #include "VXFlags.hpp"
-#include "VXWindow.hpp"
-#include "VXGraphics.hpp"
+#include "VXMesh.hpp"
+#include "VXMaterial.hpp"
+#include "VXMath.hpp"
+#include "VXCamera.hpp"
 
 namespace VX {
+    class VXWindow;
+    class VXGraphics;
+
+    struct VXDrawCall {
+        VXMesh* mesh = nullptr;
+        VXMaterial* material = nullptr;
+        float transform[16] = {};
+    };
+
     class VXRenderer {
     public:
         VXRenderer() = default;
@@ -15,30 +27,44 @@ namespace VX {
         ~VXRenderer();
 
         bool Populate();
+        void Submit(VXMesh& mesh, VXMaterial& material, const float transform[16]);
         void Render();
         void Destroy();
 
+        VXMesh CreateMesh(const std::vector<VXVertex>& vertices, const std::vector<uint32_t>& indices);
+        VXMaterial CreateMaterial(const std::string& vertShaderPath, const std::string& fragShaderPath);
+
+        void SetCamera(const VXCamera& camera);
+
     private:
-        VXWindow*        m_window   = nullptr;
-        VXGraphics*      m_graphics = nullptr;
-        VkInstance       m_instance = VK_NULL_HANDLE;
-        VXFlags          m_flags    = VXFlags::NONE;
+        VXWindow* m_window = nullptr;
+        VXGraphics* m_graphics = nullptr;
+        VkInstance m_instance = VK_NULL_HANDLE;
+        VXFlags m_flags = VXFlags::NONE;
 
-        VkSurfaceKHR               m_surface         = VK_NULL_HANDLE;
-        VkSwapchainKHR             m_swapchain        = VK_NULL_HANDLE;
-        VkFormat                   m_swapchainFormat  = VK_FORMAT_UNDEFINED;
-        VkExtent2D                 m_swapchainExtent  = {};
-        VkRenderPass               m_renderPass       = VK_NULL_HANDLE;
-        VkCommandPool              m_commandPool      = VK_NULL_HANDLE;
-        uint32_t                   m_currentFrame     = 0;
+        VkSurfaceKHR m_surface = VK_NULL_HANDLE;
+        VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
+        VkFormat m_swapchainFormat = VK_FORMAT_UNDEFINED;
+        VkExtent2D m_swapchainExtent = {};
+        VkRenderPass m_renderPass = VK_NULL_HANDLE;
+        VkCommandPool m_commandPool = VK_NULL_HANDLE;
+        uint32_t m_currentFrame = 0;
 
-        std::vector<VkImage>         m_swapchainImages;
-        std::vector<VkImageView>     m_swapchainImageViews;
-        std::vector<VkFramebuffer>   m_framebuffers;
+        std::vector<VkImage> m_swapchainImages;
+        std::vector<VkImageView> m_swapchainImageViews;
+        std::vector<VkFramebuffer> m_framebuffers;
         std::vector<VkCommandBuffer> m_commandBuffers;
-        std::vector<VkSemaphore>     m_imageAvailableSemaphores;
-        std::vector<VkSemaphore>     m_renderFinishedSemaphores;
-        std::vector<VkFence>         m_inFlightFences;
+        std::vector<VkSemaphore> m_imageAvailableSemaphores;
+        std::vector<VkSemaphore> m_renderFinishedSemaphores;
+        std::vector<VkFence> m_inFlightFences;
+        std::vector<VXDrawCall> m_drawQueue;
+
+        VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+        std::vector<VkDescriptorSet> m_descriptorSets;
+        std::vector<VkBuffer> m_uboBuffers;
+        std::vector<VkDeviceMemory> m_uboMemory;
+        std::vector<void*> m_uboMapped;
 
         static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -50,6 +76,18 @@ namespace VX {
         void createCommandBuffers();
         void createSyncObjects();
         void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
+
+        void createDescriptorSetLayout();
+        void createDescriptorPool();
+        void createDescriptorSets();
+        void updateUBO(const VXMat4& mvp);
+
+        uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+        void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                          VkMemoryPropertyFlags properties,
+                          VkBuffer& buffer, VkDeviceMemory& memory);
+        void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size);
+        VkShaderModule loadShader(const std::string& path);
     };
 }
 
