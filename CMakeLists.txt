@@ -1,4 +1,4 @@
-set(CM_PROJECT_NAME ProjectTemplate)
+set(CM_PROJECT_NAME VXGE)
 
 # top-level check
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
