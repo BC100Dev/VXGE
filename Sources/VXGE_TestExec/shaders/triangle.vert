@@ -9,7 +9,11 @@ layout(binding = 0) uniform UBO {
     mat4 mvp;
 } ubo;
 
+layout(push_constant) uniform PushConstants {
+    mat4 model;
+} push;
+
 void main() {
-    gl_Position = ubo.mvp * vec4(inPosition, 1.0);
+    gl_Position = ubo.mvp * push.model * vec4(inPosition, 1.0);
     fragColor = inColor;
 }

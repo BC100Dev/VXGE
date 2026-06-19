@@ -1,6 +1,7 @@
 #ifndef VXGE_SHARED_HEADER
 #define VXGE_SHARED_HEADER
 
+#include "VXAudio.hpp"
 #include "VXCamera.hpp"
 #include "VXEngine.hpp"
 #include "VXError.hpp"
@@ -13,6 +14,7 @@
 #include "VXMath.hpp"
 #include "VXMesh.hpp"
 #include "VXMonitor.hpp"
+#include "VXOverlay.hpp"
 #include "VXRenderer.hpp"
 #include "VXWindow.hpp"
 

@@ -19,3 +19,6 @@ add_custom_target(VxGameTestShaders ALL
         COMMENT "Compiling shaders"
 )
 add_dependencies(VxGameTest VxGameTestShaders)
+
+file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY_ROOT}/testmodels")
+file(COPY_FILE "${PROJECT_MODULE_ROOT}/testmodels/Porsche_911_GT2.obj" "${OUTPUT_DIRECTORY_ROOT}/testmodels/Porsche_911_GT2.obj")

@@ -46,6 +46,7 @@ namespace VX {
         Num0 = 39,
 
         Return = 40,
+        Enter = Return,
         Escape = 41,
         Backspace = 42,
         Tab = 43,

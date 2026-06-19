@@ -15,6 +15,13 @@ namespace VX {
 
         RENDERER_2D = 0x00300001,
         RENDERER_3D = 0x00300002,
+
+        CULL_NONE = 0x00400001,
+        CULL_BACK = 0x00400002,
+        CULL_FRONT = 0x00400003,
+        CULL_FRONT_BACK = 0x00400004,
+
+        MESH_TRANSPARENT =  0x00500001,
     };
 
     inline VXFlags operator|(VXFlags a, VXFlags b) {

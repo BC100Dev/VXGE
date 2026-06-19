@@ -1,10 +1,18 @@
 #include <VXGE/VXRenderer.hpp>
+#include <VXGE/VXOverlay.hpp>
+#include <imgui.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <VXGE/VXWindow.hpp>
 #include <VXGE/VXGraphics.hpp>
 #include <VXGE/VXError.hpp>
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <thread>
+#include <imgui_impl_vulkan.h>
+
+#include "VXOverlayData.hpp"
 
 namespace VX {
     VXRenderer::VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance, VXFlags flags)
@@ -21,6 +29,7 @@ namespace VX {
 
         createSwapchain();
         createImageViews();
+        createDepthResources();
         createDescriptorSetLayout();
 
         m_uboBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -172,10 +181,15 @@ namespace VX {
                       static_cast<uint32_t>(indices.size()));
     }
 
-    VkShaderModule VXRenderer::loadShader(const std::string& path) {
+    VkShaderModule VXRenderer::loadShader(const fs::path& path) {
+        if (!fs::exists(path)) {
+            SetLastError(VXError("Failed to open shader at \"" + path.string() + "\" (File not found)"));
+            return VK_NULL_HANDLE;
+        }
+
         std::ifstream file(path, std::ios::ate | std::ios::binary);
         if (!file.is_open()) {
-            SetLastError(VXError("Failed to open shader: " + path));
+            SetLastError(VXError("Failed to open shader: " + path.string()));
             return VK_NULL_HANDLE;
         }
 
@@ -192,13 +206,14 @@ namespace VX {
 
         VkShaderModule shaderModule;
         if (vkCreateShaderModule(m_graphics->Device(), &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            SetLastError(VXError("Failed to create shader module: " + path));
+            SetLastError(VXError("Failed to create shader module: " + path.string()));
             return VK_NULL_HANDLE;
         }
         return shaderModule;
     }
 
-    VXMaterial VXRenderer::CreateMaterial(const std::string& vertShaderPath, const std::string& fragShaderPath) {
+    VXMaterial VXRenderer::CreateMaterial(const fs::path& vertShaderPath, const fs::path& fragShaderPath,
+                                          VXFlags cullFlags) {
         VkDevice device = m_graphics->Device();
 
         VkShaderModule vertModule = loadShader(vertShaderPath);
@@ -264,13 +279,21 @@ namespace VX {
         viewportState.scissorCount = 1;
         viewportState.pScissors = &scissor;
 
+        VkCullModeFlags vkCullMode = VK_CULL_MODE_BACK_BIT;
+        if (cullFlags == VXFlags::CULL_NONE)
+            vkCullMode = VK_CULL_MODE_NONE;
+        else if (cullFlags == VXFlags::CULL_FRONT)
+            vkCullMode = VK_CULL_MODE_FRONT_BIT;
+        else if (cullFlags == VXFlags::CULL_FRONT_BACK)
+            vkCullMode = VK_CULL_MODE_FRONT_AND_BACK;
+
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.cullMode = vkCullMode;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -290,10 +313,17 @@ namespace VX {
         colorBlending.attachmentCount = 1;
         colorBlending.pAttachments = &colorBlendAttachment;
 
+        VkPushConstantRange pushRange{};
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushRange.offset = 0;
+        pushRange.size = sizeof(float) * 16;
+
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         layoutInfo.setLayoutCount = 1;
         layoutInfo.pSetLayouts = &m_descriptorSetLayout;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushRange;
 
         VkPipelineLayout pipelineLayout;
         vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout);
@@ -312,6 +342,15 @@ namespace VX {
         pipelineInfo.renderPass = m_renderPass;
         pipelineInfo.subpass = 0;
 
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.stencilTestEnable = VK_FALSE;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+
         VkPipeline pipeline;
         vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
 
@@ -326,7 +365,9 @@ namespace VX {
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         vkBeginCommandBuffer(cmd, &beginInfo);
 
-        VkClearValue clearColor = {.color = {.float32 = {0.1f, 0.1f, 0.1f, 1.0f}}};
+        VkClearValue clearValues[2]{};
+        clearValues[0].color = {.float32 = {m_clearColor[0], m_clearColor[1], m_clearColor[2], m_clearColor[3]}};
+        clearValues[1].depthStencil = {1.0f, 0};
 
         VkRenderPassBeginInfo rpInfo{};
         rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -334,18 +375,18 @@ namespace VX {
         rpInfo.framebuffer = m_framebuffers[imageIndex];
         rpInfo.renderArea.offset = {0, 0};
         rpInfo.renderArea.extent = m_swapchainExtent;
-        rpInfo.clearValueCount = 1;
-        rpInfo.pClearValues = &clearColor;
+        rpInfo.clearValueCount = 2;
+        rpInfo.pClearValues = clearValues;
 
         vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         for (const auto& dc : m_drawQueue) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, dc.material->GetPipeline());
-
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     dc.material->GetPipelineLayout(), 0, 1,
                                     &m_descriptorSets[m_currentFrame], 0, nullptr);
-
+            vkCmdPushConstants(cmd, dc.material->GetPipelineLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, dc.transform);
             VkBuffer vertexBuffers[] = {dc.mesh->GetVertexBuffer()};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
@@ -353,11 +394,17 @@ namespace VX {
             vkCmdDrawIndexed(cmd, dc.mesh->GetIndexCount(), 1, 0, 0, 0);
         }
 
+        if (ovData.overlay && ImGui::GetDrawData()) {
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            ovData.overlay->ClearFrame();
+        }
+
         vkCmdEndRenderPass(cmd);
         vkEndCommandBuffer(cmd);
     }
 
     void VXRenderer::Render() {
+        m_frameStart = std::chrono::high_resolution_clock::now();
         VkDevice device = m_graphics->Device();
 
         vkWaitForFences(device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
@@ -397,6 +444,17 @@ namespace VX {
         vkQueuePresentKHR(m_graphics->PresentQueue(), &presentInfo);
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         m_drawQueue.clear();
+
+        if (m_fpsCapEnabled) {
+            float targetFrameTime = 1.0f / (float)m_fpsCap;
+            float elapsed = std::chrono::duration<float>(
+                std::chrono::high_resolution_clock::now() - m_frameStart).count();
+
+            if (elapsed < targetFrameTime) {
+                std::chrono::duration<float> sleepTime(targetFrameTime - elapsed);
+                std::this_thread::sleep_for(sleepTime);
+            }
+        }
     }
 
     void VXRenderer::Destroy() {
@@ -434,6 +492,9 @@ namespace VX {
         for (auto fb : m_framebuffers)
             vkDestroyFramebuffer(device, fb, nullptr);
 
+        vkDestroyImageView(device, m_depthImageView, nullptr);
+        vkDestroyImage(device, m_depthImage, nullptr);
+        vkFreeMemory(device, m_depthImageMemory, nullptr);
         vkDestroyRenderPass(device, m_renderPass, nullptr);
 
         for (auto iv : m_swapchainImageViews)
@@ -449,6 +510,9 @@ namespace VX {
         m_commandPool = VK_NULL_HANDLE;
         m_descriptorPool = VK_NULL_HANDLE;
         m_descriptorSetLayout = VK_NULL_HANDLE;
+        m_depthImageView = VK_NULL_HANDLE;
+        m_depthImage = VK_NULL_HANDLE;
+        m_depthImageMemory = VK_NULL_HANDLE;
         m_imageAvailableSemaphores.clear();
         m_renderFinishedSemaphores.clear();
         m_inFlightFences.clear();
@@ -482,7 +546,7 @@ namespace VX {
             if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
                 format = f;
 
-        VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        VkPresentModeKHR presentMode = m_vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
         for (const auto& m : presentModes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) presentMode = m;
 
@@ -571,27 +635,45 @@ namespace VX {
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+        VkAttachmentDescription depthAttachment{};
+        depthAttachment.format = VK_FORMAT_D32_SFLOAT;
+        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
         VkAttachmentReference colorRef{};
         colorRef.attachment = 0;
         colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthRef{};
+        depthRef.attachment = 1;
+        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorRef;
+        subpass.pDepthStencilAttachment = &depthRef;
 
         VkSubpassDependency dependency{};
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         dependency.srcAccessMask = 0;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
+        VkAttachmentDescription attachments[] = {colorAttachment, depthAttachment};
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = 1;
-        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.attachmentCount = 2;
+        renderPassInfo.pAttachments = attachments;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
         renderPassInfo.dependencyCount = 1;
@@ -605,11 +687,13 @@ namespace VX {
         m_framebuffers.resize(m_swapchainImageViews.size());
 
         for (size_t i = 0; i < m_swapchainImageViews.size(); i++) {
+            VkImageView attachments[] = {m_swapchainImageViews[i], m_depthImageView};
+
             VkFramebufferCreateInfo fbInfo{};
             fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             fbInfo.renderPass = m_renderPass;
-            fbInfo.attachmentCount = 1;
-            fbInfo.pAttachments = &m_swapchainImageViews[i];
+            fbInfo.attachmentCount = 2;
+            fbInfo.pAttachments = attachments;
             fbInfo.width = m_swapchainExtent.width;
             fbInfo.height = m_swapchainExtent.height;
             fbInfo.layers = 1;
@@ -722,5 +806,109 @@ namespace VX {
 
     void VXRenderer::SetCamera(const VXCamera& camera) {
         updateUBO(camera.GetVP());
+    }
+
+    void VXRenderer::SetTargetFPS(int fps) {
+        m_fpsCap = fps;
+        m_fpsCapEnabled = true;
+    }
+
+    void VXRenderer::ClearTargetFPS() {
+        m_fpsCapEnabled = false;
+    }
+
+    void VXRenderer::SetVSync(bool vsync) {
+        if (m_vsync == vsync)
+            return;
+
+        m_vsync = vsync;
+        if (m_swapchain == VK_NULL_HANDLE)
+            return;
+
+        vkDeviceWaitIdle(m_graphics->Device());
+
+        for (auto fb : m_framebuffers)
+            vkDestroyFramebuffer(m_graphics->Device(), fb, nullptr);
+        m_framebuffers.clear();
+
+        for (auto iv : m_swapchainImageViews)
+            vkDestroyImageView(m_graphics->Device(), iv, nullptr);
+        m_swapchainImageViews.clear();
+
+        vkDestroyRenderPass(m_graphics->Device(), m_renderPass, nullptr);
+        vkDestroySwapchainKHR(m_graphics->Device(), m_swapchain, nullptr);
+
+        m_swapchain = VK_NULL_HANDLE;
+        m_renderPass = VK_NULL_HANDLE;
+
+        createSwapchain();
+        createImageViews();
+        createDepthResources();
+        createRenderPass();
+        createFramebuffers();
+    }
+
+    void VXRenderer::createDepthResources() {
+        VkDevice device = m_graphics->Device();
+
+        VkImageCreateInfo imageInfo{};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = m_swapchainExtent.width;
+        imageInfo.extent.height = m_swapchainExtent.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = VK_FORMAT_D32_SFLOAT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        vkCreateImage(device, &imageInfo, nullptr, &m_depthImage);
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(device, m_depthImage, &memReqs);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vkAllocateMemory(device, &allocInfo, nullptr, &m_depthImageMemory);
+        vkBindImageMemory(device, m_depthImage, m_depthImageMemory, 0);
+
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = m_depthImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_D32_SFLOAT;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        vkCreateImageView(device, &viewInfo, nullptr, &m_depthImageView);
+    }
+
+    void VXRenderer::SetClearColor(float r, float g, float b, float a) {
+        m_clearColor[0] = r;
+        m_clearColor[1] = g;
+        m_clearColor[2] = b;
+        m_clearColor[3] = a;
+    }
+
+    VkInstance VXRenderer::GetInstance() const {
+        return m_instance;
+    }
+
+    VkRenderPass VXRenderer::GetRenderPass() const {
+        return m_renderPass;
+    }
+
+    VkCommandBuffer VXRenderer::GetCurrentCommandBuffer() const {
+        return m_commandBuffers[m_currentFrame];
     }
 }

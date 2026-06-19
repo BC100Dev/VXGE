@@ -9,6 +9,8 @@ namespace VX {
     static auto vx_lastTime = std::chrono::high_resolution_clock::now();
     static float vx_deltaTime = 0.0f;
 
+    static bool vx_deltaCalcFirstTime = true;
+
     const std::vector<const char*> VXEngine::VALIDATION_LAYERS = {
         "VK_LAYER_KHRONOS_validation"
     };
@@ -18,7 +20,8 @@ namespace VX {
     }
 
     VXEngine::~VXEngine() {
-        Shutdown();
+        if (!s_shutdownInitiated)
+            Shutdown();
     }
 
     bool VXEngine::Initialize() {
@@ -38,6 +41,7 @@ namespace VX {
         }
 
         SDL_Quit();
+        s_shutdownInitiated = true;
     }
 
     void VXEngine::createInstance() {
@@ -152,13 +156,31 @@ namespace VX {
         return devices;
     }
 
-    void VXEngine::TickTime() {
+    bool VXEngine::TickTime() {
         auto now = std::chrono::high_resolution_clock::now();
         vx_deltaTime = std::chrono::duration<float>(now - vx_lastTime).count();
         vx_lastTime = now;
+
+        if (vx_deltaCalcFirstTime) {
+            vx_deltaCalcFirstTime = false;
+            return true;
+        }
+
+        return false;
     }
 
     float VXEngine::DeltaTime() const {
         return vx_deltaTime;
+    }
+
+    VXOverlay VXEngine::CreateOverlay(VXWindow& window, VXGraphics& graphics, VXRenderer& renderer) {
+        return VXOverlay(window, graphics, m_instance, renderer.GetRenderPass());
+    }
+
+    void VXEngine::DestroyGraphics(std::vector<VXGraphics>& gpus) {
+        for (auto& gpu : gpus)
+            gpu.Destroy();
+
+        gpus.clear();
     }
 }

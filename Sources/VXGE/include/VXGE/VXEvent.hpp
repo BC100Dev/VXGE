@@ -75,6 +75,51 @@ namespace VX {
             VXGamepadEvent gamepad;
             VXWindowEvent window;
         };
+
+        SDL_Event ToSDL() const {
+            SDL_Event sdlEvent{};
+            switch (type) {
+            case VXEventType::KeyDown:
+            case VXEventType::KeyUp:
+                sdlEvent.type = (type == VXEventType::KeyDown)
+                                    ? SDL_EVENT_KEY_DOWN
+                                    : SDL_EVENT_KEY_UP;
+                sdlEvent.key.scancode = static_cast<SDL_Scancode>(
+                    static_cast<uint32_t>(key.keyCode));
+                sdlEvent.key.repeat = key.repeat ? 1 : 0;
+                break;
+            case VXEventType::MouseMove:
+                sdlEvent.type = SDL_EVENT_MOUSE_MOTION;
+                sdlEvent.motion.x = mouse.x;
+                sdlEvent.motion.y = mouse.y;
+                sdlEvent.motion.xrel = mouse.deltaX;
+                sdlEvent.motion.yrel = mouse.deltaY;
+                break;
+            case VXEventType::MouseDown:
+            case VXEventType::MouseUp:
+                sdlEvent.type = (type == VXEventType::MouseDown)
+                                    ? SDL_EVENT_MOUSE_BUTTON_DOWN
+                                    : SDL_EVENT_MOUSE_BUTTON_UP;
+                sdlEvent.button.button = mouse.button;
+                sdlEvent.button.x = mouse.x;
+                sdlEvent.button.y = mouse.y;
+                break;
+            case VXEventType::MouseWheel:
+                sdlEvent.type = SDL_EVENT_MOUSE_WHEEL;
+                sdlEvent.wheel.x = mouse.wheelX;
+                sdlEvent.wheel.y = mouse.wheelY;
+                break;
+            case VXEventType::WindowFocusGained:
+                sdlEvent.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+                break;
+            case VXEventType::WindowFocusLost:
+                sdlEvent.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+                break;
+            default: return sdlEvent;
+            }
+
+            return sdlEvent;
+        }
     };
 }
 

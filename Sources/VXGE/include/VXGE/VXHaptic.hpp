@@ -9,7 +9,7 @@ namespace VX {
     class VXHaptic {
     public:
         VXHaptic() = default;
-        VXHaptic(SDL_JoystickID joystickId);
+        VXHaptic(uint32_t joystickId);
         ~VXHaptic();
 
         VXHaptic(const VXHaptic&) = delete;

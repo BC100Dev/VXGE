@@ -204,6 +204,18 @@ namespace VX {
         m_onEvent = callback;
     }
 
+    void VXWindow::AddOnEvent(std::function<void(VXEvent&)> callback) {
+        auto existing = m_onEvent;
+        if (existing) {
+            m_onEvent = [existing, callback](VXEvent& e) {
+                existing(e);
+                callback(e);
+            };
+        } else {
+            m_onEvent = callback;
+        }
+    }
+
     bool VXWindow::IsKeyHeld(VXKey key) const {
         const bool* keys = SDL_GetKeyboardState(nullptr);
         return keys[static_cast<uint32_t>(key)];
@@ -216,5 +228,18 @@ namespace VX {
 
     void VXWindow::ClearCloseKey() {
         m_hasCloseKey = false;
+    }
+
+    void VXWindow::Close() {
+        m_closing = true;
+    }
+
+    void VXWindow::FireCloseEvent() {
+        if (!m_onCloseRequest) {
+            m_closing = true;
+            return;
+        }
+
+        m_closing = m_onCloseRequest();
     }
 }

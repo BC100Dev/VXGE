@@ -1,14 +1,19 @@
 #ifndef VXGE_RENDERER_HPP
 #define VXGE_RENDERER_HPP
 
+#include <filesystem>
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <string>
+#include <chrono>
 #include "VXFlags.hpp"
 #include "VXMesh.hpp"
 #include "VXMaterial.hpp"
 #include "VXMath.hpp"
 #include "VXCamera.hpp"
+#include "../../src/VXGE/VXOverlayData.hpp"
+
+namespace fs = std::filesystem;
 
 namespace VX {
     class VXWindow;
@@ -32,9 +37,21 @@ namespace VX {
         void Destroy();
 
         VXMesh CreateMesh(const std::vector<VXVertex>& vertices, const std::vector<uint32_t>& indices);
-        VXMaterial CreateMaterial(const std::string& vertShaderPath, const std::string& fragShaderPath);
+        VXMaterial CreateMaterial(const fs::path& vertShaderPath, const fs::path& fragShaderPath,
+                                  VXFlags cullMode = VXFlags::CULL_BACK);
 
         void SetCamera(const VXCamera& camera);
+
+        void SetTargetFPS(int fps);
+        void ClearTargetFPS();
+        void SetVSync(bool vsync);
+
+        void SetClearColor(float r, float g, float b, float a);
+
+        VkInstance GetInstance() const;
+        VkRenderPass GetRenderPass() const;
+        VkCommandBuffer GetCurrentCommandBuffer() const;
+
 
     private:
         VXWindow* m_window = nullptr;
@@ -49,6 +66,9 @@ namespace VX {
         VkRenderPass m_renderPass = VK_NULL_HANDLE;
         VkCommandPool m_commandPool = VK_NULL_HANDLE;
         uint32_t m_currentFrame = 0;
+        VkImage m_depthImage = VK_NULL_HANDLE;
+        VkDeviceMemory m_depthImageMemory = VK_NULL_HANDLE;
+        VkImageView m_depthImageView = VK_NULL_HANDLE;
 
         std::vector<VkImage> m_swapchainImages;
         std::vector<VkImageView> m_swapchainImageViews;
@@ -68,6 +88,12 @@ namespace VX {
 
         static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
+        std::chrono::high_resolution_clock::time_point m_frameStart;
+        int m_fpsCap = 60;
+        bool m_fpsCapEnabled = false;
+        bool m_vsync = false;
+        float m_clearColor[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+
         void createSwapchain();
         void createImageViews();
         void createRenderPass();
@@ -75,6 +101,7 @@ namespace VX {
         void createCommandPool();
         void createCommandBuffers();
         void createSyncObjects();
+        void createDepthResources();
         void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
 
         void createDescriptorSetLayout();
@@ -87,7 +114,7 @@ namespace VX {
                           VkMemoryPropertyFlags properties,
                           VkBuffer& buffer, VkDeviceMemory& memory);
         void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size);
-        VkShaderModule loadShader(const std::string& path);
+        VkShaderModule loadShader(const fs::path& path);
     };
 }
 

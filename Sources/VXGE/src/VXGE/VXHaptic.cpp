@@ -2,7 +2,7 @@
 #include <VXGE/VXError.hpp>
 
 namespace VX {
-    VXHaptic::VXHaptic(SDL_JoystickID joystickId)
+    VXHaptic::VXHaptic(uint32_t joystickId)
         : m_joystickId(joystickId) {
         m_haptic = SDL_OpenHapticFromJoystick(SDL_OpenJoystick(joystickId));
         if (!m_haptic) {

@@ -29,6 +29,7 @@ namespace VX {
 
         void SetOnCloseRequest(std::function<bool()> callback);
         void SetOnEvent(std::function<void(VXEvent&)> callback);
+        void AddOnEvent(std::function<void(VXEvent&)> callback);
 
         void LockMouse();
         void UnlockMouse();
@@ -37,6 +38,9 @@ namespace VX {
         bool IsKeyHeld(VXKey key) const;
         void SetCloseKey(VXKey key);
         void ClearCloseKey();
+
+        void Close();
+        void FireCloseEvent();
 
     private:
         std::string m_title;

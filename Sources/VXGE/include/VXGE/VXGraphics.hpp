@@ -12,8 +12,9 @@ namespace VX {
         VXGraphics() = default;
         explicit VXGraphics(VkPhysicalDevice physicalDevice);
         ~VXGraphics();
+        void Destroy();
 
-        VXGraphics(const VXGraphics&)            = delete;
+        VXGraphics(const VXGraphics&) = delete;
         VXGraphics& operator=(const VXGraphics&) = delete;
         VXGraphics(VXGraphics&& other) noexcept;
         VXGraphics& operator=(VXGraphics&& other) noexcept;
@@ -39,6 +40,7 @@ namespace VX {
 
         bool findQueueFamilies();
         void createLogicalDevice();
+        void ResetMovedFromState() noexcept;
     };
 }
 
