@@ -15,7 +15,10 @@ If you want to see the active tests and how to write a custom implementation of 
 and how you can replicate things on your own. Alternatively, you can pass in a `SKILL.md`
 to your clanker, and it'll produce working code... well, hopefully, I let Claude connect
 to my system using the `filesystem` and `bash-shell` connectors because I'm a vibe-coder,
-like everyone else because it just makes things faster, no?
+like everyone else because it just makes things faster, no? And even though I am also a
+vibe-coder, I do tend to check up on things later on. This is how modular I managed to
+go with, which is also something I do tend to like. Modular codebases allow me to
+maintain things better.
 
 And yes, I let Claude Sonnet 4.6 write the [SKILL](SKILL.md) file because I've been using
 it the entire time for the coding sessions.
