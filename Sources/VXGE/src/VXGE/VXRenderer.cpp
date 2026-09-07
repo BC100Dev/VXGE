@@ -394,10 +394,8 @@ namespace VX {
             vkCmdDrawIndexed(cmd, dc.mesh->GetIndexCount(), 1, 0, 0, 0);
         }
 
-        if (ovData.overlay && ImGui::GetDrawData()) {
+        if (ovData.overlay && ImGui::GetDrawData())
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-            ovData.overlay->ClearFrame();
-        }
 
         vkCmdEndRenderPass(cmd);
         vkEndCommandBuffer(cmd);
@@ -417,8 +415,10 @@ namespace VX {
         vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
         recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
 
+        // some shit broke down that needed fixing, which apparently, this should be the correct pattern,
+        // as per https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
         VkSemaphore waitSemaphores[] = {m_imageAvailableSemaphores[m_currentFrame]};
-        VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[m_currentFrame]};
+        VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[imageIndex]};
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
         VkSubmitInfo submitInfo{};
@@ -481,11 +481,14 @@ namespace VX {
         if (m_descriptorSetLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
 
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             vkDestroySemaphore(device, m_imageAvailableSemaphores[i], nullptr);
-            vkDestroySemaphore(device, m_renderFinishedSemaphores[i], nullptr);
+
+        for (auto& sem : m_renderFinishedSemaphores)
+            vkDestroySemaphore(device, sem, nullptr);
+
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             vkDestroyFence(device, m_inFlightFences[i], nullptr);
-        }
 
         vkDestroyCommandPool(device, m_commandPool, nullptr);
 
@@ -721,8 +724,9 @@ namespace VX {
 
     void VXRenderer::createSyncObjects() {
         VkDevice device = m_graphics->Device();
+        auto imageCount = static_cast<uint32_t>(m_swapchainImages.size());
         m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        m_renderFinishedSemaphores.resize(imageCount);
         m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
         VkSemaphoreCreateInfo semInfo{};
@@ -732,11 +736,14 @@ namespace VX {
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             vkCreateSemaphore(device, &semInfo, nullptr, &m_imageAvailableSemaphores[i]);
+
+        for (uint32_t i = 0; i < imageCount; i++)
             vkCreateSemaphore(device, &semInfo, nullptr, &m_renderFinishedSemaphores[i]);
+
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             vkCreateFence(device, &fenceInfo, nullptr, &m_inFlightFences[i]);
-        }
     }
 
     void VXRenderer::createDescriptorSetLayout() {
@@ -771,7 +778,7 @@ namespace VX {
     void VXRenderer::createDescriptorSets() {
         VkDevice device = m_graphics->Device();
 
-        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_descriptorSetLayout);
+        std::vector layouts(MAX_FRAMES_IN_FLIGHT, m_descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = m_descriptorPool;
@@ -834,6 +841,13 @@ namespace VX {
         for (auto iv : m_swapchainImageViews)
             vkDestroyImageView(m_graphics->Device(), iv, nullptr);
         m_swapchainImageViews.clear();
+
+        vkDestroyImageView(m_graphics->Device(), m_depthImageView, nullptr);
+        vkDestroyImage(m_graphics->Device(), m_depthImage, nullptr);
+        vkFreeMemory(m_graphics->Device(), m_depthImageMemory, nullptr);
+        m_depthImageView = VK_NULL_HANDLE;
+        m_depthImage = VK_NULL_HANDLE;
+        m_depthImageMemory = VK_NULL_HANDLE;
 
         vkDestroyRenderPass(m_graphics->Device(), m_renderPass, nullptr);
         vkDestroySwapchainKHR(m_graphics->Device(), m_swapchain, nullptr);

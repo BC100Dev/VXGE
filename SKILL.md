@@ -1,6 +1,6 @@
 ---
 name: vxge
-description: Reference guide for writing correct C++ game code using VXGE (Vulkan-powered Game Engine). Use when working on any project that includes VXGE, when writing code that uses VX:: namespace classes, when setting up a game loop, renderer, window, camera, input, or model loading with VXGE. Covers all public API methods, correct method names, initialization order, destruction order, shader requirements, and common mistakes.
+description: "Reference guide for writing correct C++ game code using VXGE (Vulkan-powered Game Engine). Use when working on any project that includes VXGE, when writing code that uses VX:: namespace classes, when setting up a game loop, renderer, window, camera, input, or model loading with VXGE. Covers all public API methods, correct method names, initialization order, destruction order, shader requirements, and common mistakes."
 ---
 
 # VXGE — Vulkan-powered Game Engine — AI Skill Reference

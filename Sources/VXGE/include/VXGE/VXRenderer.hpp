@@ -4,14 +4,12 @@
 #include <filesystem>
 #include <vulkan/vulkan.h>
 #include <vector>
-#include <string>
 #include <chrono>
 #include "VXFlags.hpp"
 #include "VXMesh.hpp"
 #include "VXMaterial.hpp"
 #include "VXMath.hpp"
 #include "VXCamera.hpp"
-#include "../../src/VXGE/VXOverlayData.hpp"
 
 namespace fs = std::filesystem;
 
@@ -51,7 +49,6 @@ namespace VX {
         VkInstance GetInstance() const;
         VkRenderPass GetRenderPass() const;
         VkCommandBuffer GetCurrentCommandBuffer() const;
-
 
     private:
         VXWindow* m_window = nullptr;

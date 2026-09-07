@@ -48,7 +48,21 @@ namespace VX {
         float priority = 1.0f;
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 
+        std::vector<uint32_t> uniqueFamilies;
         for (uint32_t family : {m_graphicsFamily, m_presentFamily}) {
+            bool already = false;
+            for (uint32_t f : uniqueFamilies) {
+                if (f == family) {
+                    already = true;
+                    break;
+                }
+            }
+
+            if (!already)
+                uniqueFamilies.push_back(family);
+        }
+
+        for (uint32_t family : uniqueFamilies) {
             VkDeviceQueueCreateInfo qi{};
             qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             qi.queueFamilyIndex = family;

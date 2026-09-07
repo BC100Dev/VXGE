@@ -10,7 +10,6 @@
 #include <utility>
 
 namespace VX {
-
     VXOverlay::VXOverlay(VXWindow& window, VXGraphics& graphics,
                          VkInstance instance, VkRenderPass renderPass)
         : m_instance(instance),
@@ -103,13 +102,15 @@ namespace VX {
         }
 
         VkDescriptorPoolSize poolSizes[] = {
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8}
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 8},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8}
         };
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         poolInfo.maxSets = 8;
-        poolInfo.poolSizeCount = 1;
+        poolInfo.poolSizeCount = 3;
         poolInfo.pPoolSizes = poolSizes;
         vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool);
 

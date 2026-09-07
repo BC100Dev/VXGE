@@ -63,7 +63,7 @@ namespace VX {
 
         template <typename... Args>
         int Text(float x, float y, std::format_string<Args...> fmt, Args&&... args) {
-            return Text(x, y, m_activeFont, fmt, args...);
+            return Text(x, y, m_activeFont, std::move(fmt), std::forward<Args>(args)...);
         }
 
         template <typename... Args>
@@ -78,13 +78,13 @@ namespace VX {
 
         template <typename... Args>
         int TextColored(float x, float y, float r, float g, float b, float a,
-                                   std::format_string<Args...> fmt, Args&&... args) {
-            return TextColored(x, y, r, g, b, a, m_activeFont, fmt, args...);
+                        std::format_string<Args...> fmt, Args&&... args) {
+            return TextColored(x, y, r, g, b, a, m_activeFont, std::move(fmt), std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         int TextColored(float x, float y, float r, float g, float b, float a,
-                                   int font, std::format_string<Args...> fmt, Args&&... args) {
+                        int font, std::format_string<Args...> fmt, Args&&... args) {
             int id = m_nextId++;
             m_texts.push_back({
                 id, font, x, y, r, g, b, a,
@@ -95,13 +95,13 @@ namespace VX {
 
         template <typename... Args>
         int TextAnchored(VXOverlayAnchor anchor, float offsetX, float offsetY,
-                                    std::format_string<Args...> fmt, Args&&... args) {
-            return TextAnchored(anchor, offsetX, offsetY, m_activeFont, fmt, args...);
+                         std::format_string<Args...> fmt, Args&&... args) {
+            return TextAnchored(anchor, offsetX, offsetY, m_activeFont, std::move(fmt), std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         int TextAnchored(VXOverlayAnchor anchor, float offsetX, float offsetY,
-                                    int font, std::format_string<Args...> fmt, Args&&... args) {
+                         int font, std::format_string<Args...> fmt, Args&&... args) {
             float x, y;
             resolveAnchor(anchor, offsetX, offsetY, x, y);
             int id = m_nextId++;
@@ -114,7 +114,7 @@ namespace VX {
 
         template <typename... Args>
         void UpdateText(int id, std::format_string<Args...> fmt, Args&&... args) {
-            UpdateText(id, m_activeFont, fmt, args...);
+            UpdateText(id, m_activeFont, std::move(fmt), std::forward<Args>(args)...);
         }
 
         template <typename... Args>
