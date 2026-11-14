@@ -32,9 +32,9 @@ namespace VX {
             return *this;
         }
 
-        float dot(const VXVec3& o) const { return x * o.x + y * o.y + z * o.z; }
+        [[nodiscard]] float dot(const VXVec3& o) const { return x * o.x + y * o.y + z * o.z; }
 
-        VXVec3 cross(const VXVec3& o) const {
+        [[nodiscard]] VXVec3 cross(const VXVec3& o) const {
             return {
                 y * o.z - z * o.y,
                 z * o.x - x * o.z,
@@ -42,9 +42,9 @@ namespace VX {
             };
         }
 
-        float length() const { return sqrtf(x * x + y * y + z * z); }
+        [[nodiscard]] float length() const { return sqrtf(x * x + y * y + z * z); }
 
-        VXVec3 normalized() const {
+        [[nodiscard]] VXVec3 normalized() const {
             float len = length();
             if (len == 0.0f) return {0, 0, 0};
             return {x / len, y / len, z / len};
@@ -69,7 +69,7 @@ namespace VX {
             memset(mat.m, 0, sizeof(mat.m));
             float tanHalf = tanf(fovRad / 2.0f);
             mat.m[0] = 1.0f / (aspect * tanHalf);
-            mat.m[5] = -1.0f / tanHalf; // flip Y for Vulkan
+            mat.m[5] = -1.0f / tanHalf;
             mat.m[10] = far / (near - far);
             mat.m[11] = -1.0f;
             mat.m[14] = (near * far) / (near - far);
@@ -117,7 +117,7 @@ namespace VX {
             return result;
         }
 
-        const float* Data() const { return m; }
+        [[nodiscard]] const float* Data() const { return m; }
     };
 }
 

@@ -28,7 +28,7 @@ namespace VX {
 
         VXWindow CreateWindow(const std::string& title, const VXMonitor& monitor, const std::vector<VXFlags>& flags);
         VXWindow CreateWindow(const std::string& title, uint32_t width, uint32_t height, const std::vector<VXFlags>& flags);
-        VXRenderer CreateRenderer(VXWindow& window, VXGraphics& graphics);
+        VXRenderer CreateRenderer(VXWindow& window, VXGraphics& graphics, const std::vector<VXFlags>& flags = {});
         VXOverlay CreateOverlay(VXWindow& window, VXGraphics& graphics, VXRenderer& renderer);
 
         void ShowWindow(VXWindow& window);

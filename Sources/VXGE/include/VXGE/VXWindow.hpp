@@ -21,12 +21,12 @@ namespace VX {
         ~VXWindow();
 
         bool Populate();
-        bool IsClosing() const;
+        [[nodiscard]] bool IsClosing() const;
         void PollEvents();
-        const std::string& Title() const;
-        uint32_t Width() const;
-        uint32_t Height() const;
-        SDL_Window* SDLWindow() const;
+        [[nodiscard]] const std::string& Title() const;
+        [[nodiscard]] uint32_t Width() const;
+        [[nodiscard]] uint32_t Height() const;
+        [[nodiscard]] SDL_Window* SDLWindow() const;
         VkSurfaceKHR CreateSurface(VkInstance instance) const;
 
         void SetOnCloseRequest(std::function<bool()> callback);

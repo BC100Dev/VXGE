@@ -10,11 +10,11 @@ namespace VX {
         VXTexture(VkImage image, VkDeviceMemory memory, VkImageView view, VkSampler sampler,
                   uint32_t width, uint32_t height);
 
-        VkImage GetImage() const;
-        VkImageView GetImageView() const;
-        VkSampler GetSampler() const;
-        uint32_t GetWidth() const;
-        uint32_t GetHeight() const;
+        [[nodiscard]] VkImage GetImage() const;
+        [[nodiscard]] VkImageView GetImageView() const;
+        [[nodiscard]] VkSampler GetSampler() const;
+        [[nodiscard]] uint32_t GetWidth() const;
+        [[nodiscard]] uint32_t GetHeight() const;
 
         void Destroy(VkDevice device);
 

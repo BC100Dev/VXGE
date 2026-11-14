@@ -89,6 +89,7 @@ namespace VX {
                         }
 
                         int vi = 0, vti = 0, vni = 0;
+                        bool hasVti = false;
 
                         std::istringstream fvss(fv);
                         std::string part;
@@ -98,7 +99,7 @@ namespace VX {
                             if (!part.empty()) {
                                 int val = std::stoi(part);
                                 if (partIdx == 0)      vi  = val;
-                                else if (partIdx == 1) vti = val;
+                                else if (partIdx == 1) { vti = val; hasVti = true; }
                                 else if (partIdx == 2) vni = val;
                             }
                             partIdx++;
@@ -106,6 +107,7 @@ namespace VX {
 
                         vi  = vi  > 0 ? vi  - 1 : (int)(rawPositions.size() / 3) + vi;
                         vni = vni > 0 ? vni - 1 : (int)(rawNormals.size()    / 3) + vni;
+                        vti = hasVti ? (vti > 0 ? vti - 1 : (int)(rawTexcoords.size() / 2) + vti) : -1;
 
                         VXVertex vert{};
                         if (vi >= 0 && (vi * 3 + 2) < (int)rawPositions.size()) {
@@ -114,15 +116,32 @@ namespace VX {
                             vert.position[2] = rawPositions[vi * 3 + 2];
                         }
 
-                        if (vni >= 0 && (vni * 3 + 2) < (int)rawNormals.size()) {
-                            vert.color[0] = rawNormals[vni * 3 + 0] * 0.5f + 0.5f;
-                            vert.color[1] = rawNormals[vni * 3 + 1] * 0.5f + 0.5f;
-                            vert.color[2] = rawNormals[vni * 3 + 2] * 0.5f + 0.5f;
+                        if (vti >= 0 && (vti * 2 + 1) < (int)rawTexcoords.size()) {
+                            vert.uv[0] = rawTexcoords[vti * 2 + 0];
+                            // OBJ's vt v-coordinate is bottom-up; Vulkan/VXGE's sampler expects top-down.
+                            vert.uv[1] = 1.0f - rawTexcoords[vti * 2 + 1];
                         } else {
-                            vert.color[0] = 1.0f;
-                            vert.color[1] = 1.0f;
-                            vert.color[2] = 1.0f;
+                            vert.uv[0] = 0.0f;
+                            vert.uv[1] = 0.0f;
                         }
+
+                        if (vni >= 0 && (vni * 3 + 2) < (int)rawNormals.size()) {
+                            vert.normal[0] = rawNormals[vni * 3 + 0];
+                            vert.normal[1] = rawNormals[vni * 3 + 1];
+                            vert.normal[2] = rawNormals[vni * 3 + 2];
+                        } else {
+                            vert.normal[0] = 0.0f;
+                            vert.normal[1] = 0.0f;
+                            vert.normal[2] = 0.0f;
+                        }
+
+                        // vert.color used to carry the normal (remapped to 0..1) as a debug
+                        // visualization before VXVertex had a real normal field. Now that it
+                        // does, color is a plain white multiplier so lit.frag's albedo*color
+                        // passes the texture/lighting result through unmodified.
+                        vert.color[0] = 1.0f;
+                        vert.color[1] = 1.0f;
+                        vert.color[2] = 1.0f;
 
                         uint32_t newIndex = static_cast<uint32_t>(currentMesh.vertices.size());
                         currentMesh.vertices.push_back(vert);

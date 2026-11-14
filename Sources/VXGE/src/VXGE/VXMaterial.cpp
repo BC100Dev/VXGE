@@ -1,8 +1,8 @@
 #include <VXGE/VXMaterial.hpp>
 
 namespace VX {
-    VXMaterial::VXMaterial(VkPipeline pipeline, VkPipelineLayout layout)
-        : m_pipeline(pipeline), m_layout(layout) {
+    VXMaterial::VXMaterial(VkPipeline pipeline, VkPipelineLayout layout, bool usesLights)
+        : m_pipeline(pipeline), m_layout(layout), m_usesLights(usesLights) {
     }
 
     VkPipeline VXMaterial::GetPipeline() const {
@@ -51,6 +51,10 @@ namespace VX {
 
     void VXMaterial::SetDescriptorSet(VkDescriptorSet set) {
         m_descriptorSet = set;
+    }
+
+    bool VXMaterial::UsesLights() const {
+        return m_usesLights;
     }
 
     void VXMaterial::Destroy(VkDevice device) {

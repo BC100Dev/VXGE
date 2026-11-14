@@ -28,11 +28,6 @@ namespace VX {
     }
 
     void VXTexture::Destroy(VkDevice device) {
-        // m_sampler is NOT destroyed here: every VXTexture created via VXRenderer currently
-        // shares one renderer-owned default sampler (VXRenderer::m_defaultSampler), which the
-        // renderer destroys exactly once in its own Destroy(). Destroying it per-texture here
-        // would double-free it the moment more than one texture (or the white fallback
-        // texture) exists at once.
         if (m_view != VK_NULL_HANDLE)
             vkDestroyImageView(device, m_view, nullptr);
         if (m_image != VK_NULL_HANDLE)

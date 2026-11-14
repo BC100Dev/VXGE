@@ -6,10 +6,6 @@
 #include <vector>
 
 namespace VX {
-    // Plain (non-bitmask) flag enum. Functions that used to take one OR'd VXFlags value now
-    // take a std::vector<VXFlags> instead, so there is no need for these values to live in
-    // non-overlapping bit groups any more; the numbering below is kept only for readability
-    // and stability, not for bitwise combination.
     enum class VXFlags : uint64_t {
         NONE = 0,
 
@@ -25,6 +21,8 @@ namespace VX {
         CULL_FRONT_BACK = 0x00400004,
 
         MESH_TRANSPARENT =  0x00500001,
+
+        RENDERER_USE_LIGHTS = 0x00600001,
     };
 
     inline bool HasFlag(const std::vector<VXFlags>& flags, VXFlags flag) {

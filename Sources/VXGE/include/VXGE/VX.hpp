@@ -10,6 +10,7 @@
 #include "VXGraphics.hpp"
 #include "VXHaptic.hpp"
 #include "VXKey.hpp"
+#include "VXLight.hpp"
 #include "VXMaterial.hpp"
 #include "VXMath.hpp"
 #include "VXMesh.hpp"

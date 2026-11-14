@@ -6,9 +6,10 @@
 
 namespace VX {
     struct VXVertex {
-        float position[3];
-        float color[3];
+        float position[3]{};
+        float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         float uv[2] = {0.0f, 0.0f};
+        float normal[3] = {0.0f, 0.0f, 0.0f};
     };
 
     class VXMesh {
@@ -18,9 +19,9 @@ namespace VX {
                VkBuffer indexBuffer, VkDeviceMemory indexMemory,
                uint32_t indexCount);
 
-        VkBuffer GetVertexBuffer() const;
-        VkBuffer GetIndexBuffer() const;
-        uint32_t GetIndexCount() const;
+        [[nodiscard]] VkBuffer GetVertexBuffer() const;
+        [[nodiscard]] VkBuffer GetIndexBuffer() const;
+        [[nodiscard]] uint32_t GetIndexCount() const;
         void Destroy(VkDevice device);
 
     private:

@@ -8,26 +8,25 @@ namespace VX {
     class VXMaterial {
     public:
         VXMaterial() = default;
-        VXMaterial(VkPipeline pipeline, VkPipelineLayout layout);
+        VXMaterial(VkPipeline pipeline, VkPipelineLayout layout, bool usesLights = false);
 
-        VkPipeline GetPipeline() const;
-        VkPipelineLayout GetPipelineLayout() const;
+        [[nodiscard]] VkPipeline GetPipeline() const;
+        [[nodiscard]] VkPipelineLayout GetPipelineLayout() const;
 
-        // Only Albedo is currently sampled by the default pipeline/descriptor layout.
-        // Normal, RoughnessMetallic and AO slots are carried on the material now so loaders
-        // and content pipelines can populate them ahead of the renderer wiring them up.
         void SetAlbedo(VXTexture* texture);
         void SetNormal(VXTexture* texture);
         void SetRoughnessMetallic(VXTexture* texture);
         void SetAO(VXTexture* texture);
 
-        VXTexture* GetAlbedo() const;
-        VXTexture* GetNormal() const;
-        VXTexture* GetRoughnessMetallic() const;
-        VXTexture* GetAO() const;
+        [[nodiscard]] VXTexture* GetAlbedo() const;
+        [[nodiscard]] VXTexture* GetNormal() const;
+        [[nodiscard]] VXTexture* GetRoughnessMetallic() const;
+        [[nodiscard]] VXTexture* GetAO() const;
 
-        VkDescriptorSet GetDescriptorSet() const;
+        [[nodiscard]] VkDescriptorSet GetDescriptorSet() const;
         void SetDescriptorSet(VkDescriptorSet set);
+
+        [[nodiscard]] bool UsesLights() const;
 
         void Destroy(VkDevice device);
 
@@ -43,6 +42,8 @@ namespace VX {
         // Per-material descriptor set carrying the albedo binding alongside the
         // per-frame UBO set. Allocated by VXRenderer::CreateMaterial once a texture is assigned.
         VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
+
+        bool m_usesLights = false;
     };
 }
 

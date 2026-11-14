@@ -20,8 +20,9 @@
 #include "VXOverlayData.hpp"
 
 namespace VX {
-    VXRenderer::VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance)
-        : m_window(&window), m_graphics(&graphics), m_instance(instance) {
+    VXRenderer::VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance, const std::vector<VXFlags>& flags)
+        : m_window(&window), m_graphics(&graphics), m_instance(instance),
+          m_lightsEnabled(HasFlag(flags, VXFlags::RENDERER_USE_LIGHTS)) {
     }
 
     VXRenderer::~VXRenderer() {
@@ -54,14 +55,19 @@ namespace VX {
         createMaterialSetLayout();
         createMaterialDescriptorPool();
         createDefaultSampler();
+
+        if (m_lightsEnabled) {
+            createLightSetLayout();
+            createLightDescriptorPool();
+            createLightBuffers(LIGHT_BUFFER_INITIAL_CAPACITY);
+        }
+
         createRenderPass();
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
         createSyncObjects();
 
-        // Must come after createCommandPool(): createTextureFromPixels() issues one-time
-        // transfer commands allocated from m_commandPool.
         {
             unsigned char whitePixel[4] = {255, 255, 255, 255};
             m_whiteTexture = createTextureFromPixels(whitePixel, 1, 1);
@@ -358,25 +364,29 @@ namespace VX {
         bindingDesc.stride = sizeof(VXVertex);
         bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription attrDescs[3]{};
+        VkVertexInputAttributeDescription attrDescs[4]{};
         attrDescs[0].binding = 0;
         attrDescs[0].location = 0;
         attrDescs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attrDescs[0].offset = offsetof(VXVertex, position);
         attrDescs[1].binding = 0;
         attrDescs[1].location = 1;
-        attrDescs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attrDescs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attrDescs[1].offset = offsetof(VXVertex, color);
         attrDescs[2].binding = 0;
         attrDescs[2].location = 2;
         attrDescs[2].format = VK_FORMAT_R32G32_SFLOAT;
         attrDescs[2].offset = offsetof(VXVertex, uv);
+        attrDescs[3].binding = 0;
+        attrDescs[3].location = 3;
+        attrDescs[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attrDescs[3].offset = offsetof(VXVertex, normal);
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &bindingDesc;
-        vertexInput.vertexAttributeDescriptionCount = 3;
+        vertexInput.vertexAttributeDescriptionCount = 4;
         vertexInput.pVertexAttributeDescriptions = attrDescs;
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -428,10 +438,23 @@ namespace VX {
         multisampling.sampleShadingEnable = VK_FALSE;
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+        bool isTransparent = HasFlag(flags, VXFlags::MESH_TRANSPARENT);
+
         VkPipelineColorBlendAttachmentState colorBlendAttachment{};
         colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_FALSE;
+
+        if (isTransparent) {
+            colorBlendAttachment.blendEnable = VK_TRUE;
+            colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        } else {
+            colorBlendAttachment.blendEnable = VK_FALSE;
+        }
 
         VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -444,12 +467,11 @@ namespace VX {
         pushRange.offset = 0;
         pushRange.size = sizeof(float) * 16;
 
-        // Set 0: per-frame UBO. Set 1: per-material textures (Albedo, binding 0).
-        VkDescriptorSetLayout setLayouts[] = {m_descriptorSetLayout, m_materialSetLayout};
+        VkDescriptorSetLayout setLayouts[] = {m_descriptorSetLayout, m_materialSetLayout, m_lightSetLayout};
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        layoutInfo.setLayoutCount = 2;
+        layoutInfo.setLayoutCount = m_lightsEnabled ? 3 : 2;
         layoutInfo.pSetLayouts = setLayouts;
         layoutInfo.pushConstantRangeCount = 1;
         layoutInfo.pPushConstantRanges = &pushRange;
@@ -474,7 +496,7 @@ namespace VX {
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = isTransparent ? VK_FALSE : VK_TRUE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
@@ -486,7 +508,7 @@ namespace VX {
         vkDestroyShaderModule(device, vertModule, nullptr);
         vkDestroyShaderModule(device, fragModule, nullptr);
 
-        return VXMaterial(pipeline, pipelineLayout);
+        return VXMaterial(pipeline, pipelineLayout, m_lightsEnabled);
     }
 
     VXTexture VXRenderer::createTextureFromPixels(const unsigned char* pixels, uint32_t width, uint32_t height) {
@@ -670,6 +692,13 @@ namespace VX {
                                         &materialSet, 0, nullptr);
             }
 
+            if (dc.material->UsesLights() && m_lightsEnabled) {
+                VkDescriptorSet lightSet = m_lightDescriptorSets[m_currentFrame];
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        dc.material->GetPipelineLayout(), 2, 1,
+                                        &lightSet, 0, nullptr);
+            }
+
             vkCmdPushConstants(cmd, dc.material->GetPipelineLayout(),
                                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, dc.transform);
             VkBuffer vertexBuffers[] = {dc.mesh->GetVertexBuffer()};
@@ -696,6 +725,8 @@ namespace VX {
         uint32_t imageIndex;
         vkAcquireNextImageKHR(device, m_swapchain, UINT64_MAX,
                               m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+        updateLightBuffer();
 
         vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
         recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
@@ -729,6 +760,7 @@ namespace VX {
         vkQueuePresentKHR(m_graphics->PresentQueue(), &presentInfo);
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         m_drawQueue.clear();
+        m_lightQueue.clear();
 
         if (m_fpsCapEnabled) {
             float targetFrameTime = 1.0f / (float)m_fpsCap;
@@ -774,6 +806,21 @@ namespace VX {
 
         if (m_materialSetLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, m_materialSetLayout, nullptr);
+
+        for (size_t i = 0; i < m_lightBuffers.size(); i++) {
+            if (m_lightBufferMapped.size() > i && m_lightBufferMapped[i])
+                vkUnmapMemory(device, m_lightBufferMemory[i]);
+            if (m_lightBuffers[i] != VK_NULL_HANDLE)
+                vkDestroyBuffer(device, m_lightBuffers[i], nullptr);
+            if (m_lightBufferMemory[i] != VK_NULL_HANDLE)
+                vkFreeMemory(device, m_lightBufferMemory[i], nullptr);
+        }
+
+        if (m_lightDescriptorPool != VK_NULL_HANDLE)
+            vkDestroyDescriptorPool(device, m_lightDescriptorPool, nullptr);
+
+        if (m_lightSetLayout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(device, m_lightSetLayout, nullptr);
 
         m_whiteTexture.Destroy(device);
 
@@ -824,6 +871,15 @@ namespace VX {
         m_uboMemory.clear();
         m_uboMapped.clear();
         m_descriptorSets.clear();
+
+        m_lightDescriptorPool = VK_NULL_HANDLE;
+        m_lightSetLayout = VK_NULL_HANDLE;
+        m_lightBuffers.clear();
+        m_lightBufferMemory.clear();
+        m_lightBufferMapped.clear();
+        m_lightDescriptorSets.clear();
+        m_lightQueue.clear();
+        m_lightBufferCapacity = 0;
     }
 
     void VXRenderer::createSwapchain() {
@@ -1139,6 +1195,140 @@ namespace VX {
         poolInfo.maxSets = MAX_MATERIALS;
 
         vkCreateDescriptorPool(m_graphics->Device(), &poolInfo, nullptr, &m_materialDescriptorPool);
+    }
+
+    struct GPULight {
+        float direction[3];
+        float intensity;
+        float color[3];
+        float _pad = 0.0f;
+    };
+
+    void VXRenderer::createLightSetLayout() {
+        VkDescriptorSetLayoutBinding lightBinding{};
+        lightBinding.binding = 0;
+        lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        lightBinding.descriptorCount = 1;
+        lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &lightBinding;
+
+        vkCreateDescriptorSetLayout(m_graphics->Device(), &layoutInfo, nullptr, &m_lightSetLayout);
+    }
+
+    void VXRenderer::createLightDescriptorPool() {
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+        vkCreateDescriptorPool(m_graphics->Device(), &poolInfo, nullptr, &m_lightDescriptorPool);
+    }
+
+    static constexpr size_t LIGHT_BUFFER_HEADER_SIZE = 16;
+
+    void VXRenderer::createLightBuffers(size_t capacity) {
+        VkDevice device = m_graphics->Device();
+
+        for (size_t i = 0; i < m_lightBuffers.size(); i++) {
+            if (m_lightBufferMapped.size() > i && m_lightBufferMapped[i])
+                vkUnmapMemory(device, m_lightBufferMemory[i]);
+            if (m_lightBuffers[i] != VK_NULL_HANDLE)
+                vkDestroyBuffer(device, m_lightBuffers[i], nullptr);
+            if (m_lightBufferMemory[i] != VK_NULL_HANDLE)
+                vkFreeMemory(device, m_lightBufferMemory[i], nullptr);
+        }
+
+        m_lightBuffers.assign(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+        m_lightBufferMemory.assign(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+        m_lightBufferMapped.assign(MAX_FRAMES_IN_FLIGHT, nullptr);
+
+        VkDeviceSize bufferSize = LIGHT_BUFFER_HEADER_SIZE + sizeof(GPULight) * capacity;
+
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            createBuffer(bufferSize,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         m_lightBuffers[i], m_lightBufferMemory[i]);
+            vkMapMemory(device, m_lightBufferMemory[i], 0, bufferSize, 0, &m_lightBufferMapped[i]);
+        }
+
+        m_lightBufferCapacity = capacity;
+
+        if (m_lightDescriptorSets.size() != MAX_FRAMES_IN_FLIGHT) {
+            std::vector layouts(MAX_FRAMES_IN_FLIGHT, m_lightSetLayout);
+            VkDescriptorSetAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = m_lightDescriptorPool;
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+            allocInfo.pSetLayouts = layouts.data();
+
+            m_lightDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+            vkAllocateDescriptorSets(device, &allocInfo, m_lightDescriptorSets.data());
+        }
+
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = m_lightBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = bufferSize;
+
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = m_lightDescriptorSets[i];
+            write.dstBinding = 0;
+            write.dstArrayElement = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.descriptorCount = 1;
+            write.pBufferInfo = &bufferInfo;
+
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
+    }
+
+    void VXRenderer::updateLightBuffer() {
+        if (!m_lightsEnabled) return;
+
+        size_t count = m_lightQueue.size();
+        if (count > m_lightBufferCapacity) {
+            size_t newCapacity = m_lightBufferCapacity == 0 ? LIGHT_BUFFER_INITIAL_CAPACITY : m_lightBufferCapacity;
+            while (newCapacity < count)
+                newCapacity *= 2;
+            createLightBuffers(newCapacity);
+        }
+
+        std::vector<GPULight> gpuLights(count);
+        for (size_t i = 0; i < count; i++) {
+            VXVec3 dir = m_lightQueue[i].GetDirection();
+            VXVec3 col = m_lightQueue[i].GetColor();
+            gpuLights[i].direction[0] = dir.x;
+            gpuLights[i].direction[1] = dir.y;
+            gpuLights[i].direction[2] = dir.z;
+            gpuLights[i].intensity = m_lightQueue[i].GetIntensity();
+            gpuLights[i].color[0] = col.x;
+            gpuLights[i].color[1] = col.y;
+            gpuLights[i].color[2] = col.z;
+        }
+
+        uint32_t gpuCount = static_cast<uint32_t>(count);
+        auto* mapped = static_cast<uint8_t*>(m_lightBufferMapped[m_currentFrame]);
+        memcpy(mapped, &gpuCount, sizeof(gpuCount));
+
+        if (count > 0)
+            memcpy(mapped + LIGHT_BUFFER_HEADER_SIZE, gpuLights.data(), sizeof(GPULight) * count);
+    }
+
+    void VXRenderer::SubmitLight(const VXLight& light) {
+        if (!m_lightsEnabled) return;
+        m_lightQueue.push_back(light);
     }
 
     void VXRenderer::createDefaultSampler() {

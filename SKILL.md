@@ -23,7 +23,7 @@ Single umbrella header for full access:
 
     #include <VXGE/VX.hpp>
 
-`VX.hpp` includes `VXAudio.hpp`, `VXCamera.hpp`, `VXEngine.hpp`, `VXError.hpp`, `VXEvent.hpp`, `VXFlags.hpp`, `VXGraphics.hpp`, `VXHaptic.hpp`, `VXKey.hpp`, `VXMaterial.hpp`, `VXMath.hpp`, `VXMesh.hpp`, `VXMonitor.hpp`, `VXOverlay.hpp`, `VXRenderer.hpp`, `VXTexture.hpp`, and `VXWindow.hpp`.
+`VX.hpp` includes `VXAudio.hpp`, `VXCamera.hpp`, `VXEngine.hpp`, `VXError.hpp`, `VXEvent.hpp`, `VXFlags.hpp`, `VXGraphics.hpp`, `VXHaptic.hpp`, `VXKey.hpp`, `VXLight.hpp`, `VXMaterial.hpp`, `VXMath.hpp`, `VXMesh.hpp`, `VXMonitor.hpp`, `VXOverlay.hpp`, `VXRenderer.hpp`, `VXTexture.hpp`, and `VXWindow.hpp`.
 
 Individual headers if needed:
 
@@ -36,6 +36,7 @@ Individual headers if needed:
     #include <VXGE/VXMaterial.hpp>
     #include <VXGE/VXTexture.hpp>
     #include <VXGE/VXCamera.hpp>
+    #include <VXGE/VXLight.hpp>
     #include <VXGE/VXMath.hpp>
     #include <VXGE/VXEvent.hpp>
     #include <VXGE/VXKey.hpp>
@@ -68,8 +69,9 @@ This order is mandatory. Deviating from it causes Vulkan validation errors or cr
     VX::VXWindow wnd = ctx.CreateWindow("Title", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
     wnd.Populate();
 
-    // No flags parameter any more — the renderer is always 3D.
-    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0]);
+    // Renderer is always 3D; flags are optional and currently only gate the lighting
+    // system (VXFlags::RENDERER_USE_LIGHTS) -- omit entirely for no lighting at all.
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0], {VX::VXFlags::RENDERER_USE_LIGHTS});
     renderer.Populate();
 
     // Optional overlay (ImGui-backed, must be created after renderer.Populate())
@@ -115,7 +117,7 @@ Central orchestrator. Always stack-allocated, never heap-allocated with `new`.
 
     VX::VXWindow   ctx.CreateWindow(title, monitor, flags);          // sized to the monitor
     VX::VXWindow   ctx.CreateWindow(title, width, height, flags);    // explicit size — use for a real windowed window
-    VX::VXRenderer ctx.CreateRenderer(window, graphics);             // no flags — renderer is always 3D
+    VX::VXRenderer ctx.CreateRenderer(window, graphics, flags = {}); // renderer is always 3D; flags currently only gate RENDERER_USE_LIGHTS
     VX::VXOverlay  ctx.CreateOverlay(window, graphics, renderer);    // must call after renderer.Populate()
 
 Both `CreateWindow` overloads take `const std::vector<VX::VXFlags>&`, not a single bare `VXFlags` value:
@@ -214,12 +216,18 @@ VXWindow is NOT copyable. Move-only.
 
 Wraps swapchain, render pass, framebuffers, command buffers, sync objects, descriptor sets, UBO, depth buffer, and the per-material texture descriptor set layout/pool/sampler.
 
-    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0]);   // no flags — always 3D
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0], flags = {});   // always 3D; flags gate lighting
     bool ok = renderer.Populate();   // must be called before use
 
     VX::VXMesh     renderer.CreateMesh(vertices, indices);
     VX::VXMaterial renderer.CreateMaterial(vertShaderPath, fragShaderPath,
                                             flags = {VX::VXFlags::CULL_BACK});
+
+    // Queues a directional light for the current frame. Only has an effect when this
+    // renderer was created with VXFlags::RENDERER_USE_LIGHTS -- otherwise a harmless no-op.
+    // Queue is cleared automatically after each Render(), same as the draw queue, so a light
+    // must be resubmitted every frame it should affect (there is no persistent light list).
+    void renderer.SubmitLight(const VX::VXLight& light);
 
     VX::VXTexture  renderer.CreateTexture(imagePath);                       // decode PNG/JPG/etc. from a file path
     VX::VXTexture  renderer.CreateTextureFromFD(fd, offset, size);          // decode from an open POSIX fd + byte range
@@ -289,6 +297,18 @@ If the material has a texture bound, the fragment shader samples it from set 1, 
 
     layout(set = 1, binding = 0) uniform sampler2D albedoTex;
 
+When the renderer was created with `VXFlags::RENDERER_USE_LIGHTS`, materials also get a 3rd
+descriptor set (set = 2) bound automatically: a readonly storage buffer of submitted lights.
+See the "Lighting" section below for the exact layout and a full lit shader pair.
+
+**Winding order:** every pipeline is built with `frontFace = VK_FRONT_FACE_CLOCKWISE`. glTF's
+spec mandates counter-clockwise front faces, so indices loaded via `GLTFModel` are
+automatically rewound (each triangle's last two indices swapped) to match. Hand-authored
+vertex/index data must be wound clockwise (as seen from the front) to render correctly with
+`CULL_BACK`/`CULL_FRONT` — winding it the glTF/OpenGL way (CCW) culls the wrong face, which
+shows up as a closed mesh rendering seemingly fine from one side but showing its *inside*
+from the other (e.g. a tire's inner wall visible from outside the car).
+
 VXRenderer is NOT copyable. Move-only.
 
 ---
@@ -298,9 +318,9 @@ VXRenderer is NOT copyable. Move-only.
 Holds GPU vertex and index buffers. Created via `renderer.CreateMesh()`.
 
     std::vector<VX::VXVertex> vertices = {
-        {{ 0.0f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, 0.0f }},
-        {{ 0.5f,  0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f }},
-        {{-0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }},
+        {{ 0.0f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, { 0.5f, 0.0f }},
+        {{ 0.5f,  0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f }},
+        {{-0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }},
     };
     std::vector<uint32_t> indices = { 0, 1, 2 };
 
@@ -310,10 +330,16 @@ Holds GPU vertex and index buffers. Created via `renderer.CreateMesh()`.
 VXVertex layout:
 
     struct VXVertex {
-        float position[3];   // location 0 in vertex shader
-        float color[3];      // location 1 in vertex shader
-        float uv[2];         // location 2 in vertex shader — defaults to {0.0f, 0.0f}
+        float position[3];                              // location 0 in vertex shader
+        float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};      // location 1 in vertex shader — RGBA, alpha only
+                                                         // visible with VXFlags::MESH_TRANSPARENT (see below)
+        float uv[2] = {0.0f, 0.0f};                     // location 2 in vertex shader
+        float normal[3] = {0.0f, 0.0f, 0.0f};           // location 3 in vertex shader
     };
+
+`color` is 4 floats (RGBA), not 3 — a brace-initializer with only 3 values zero-fills the
+4th slot (alpha = 0.0, fully transparent), which is almost never what you want. Always write
+all 4 components explicitly: `{1.0f, 1.0f, 1.0f, 1.0f}` for opaque white, not `{1.0f, 1.0f, 1.0f}`.
 
 When building a textured mesh out of shared triangle vertices (e.g. faces of a pyramid), give each triangle its own unshared vertices with clean corner UVs rather than reusing vertices with a single averaged UV across differently-oriented faces — sharing vertices across faces with different UV orientations stretches/distorts the texture sampling on those faces.
 
@@ -327,6 +353,15 @@ Holds a compiled Vulkan graphics pipeline plus the engine's PBR texture slots. C
         fs::path("/path/to/shader.vert.spv"),
         fs::path("/path/to/shader.frag.spv"),
         {VX::VXFlags::CULL_BACK}   // optional, defaults to {VXFlags::CULL_BACK}
+    );
+
+Add `VX::VXFlags::MESH_TRANSPARENT` alongside a cull flag to get a real alpha-blended,
+depth-write-disabled pipeline (see the `VXFlags` section below for exact blend/depth
+semantics) — e.g. for glass, water, or any surface whose vertex/texture alpha should matter:
+
+    VX::VXMaterial glassMaterial = renderer.CreateMaterial(
+        vert, frag,
+        {VX::VXFlags::CULL_BACK, VX::VXFlags::MESH_TRANSPARENT}
     );
 
     VkPipeline       material.GetPipeline();
@@ -359,6 +394,152 @@ Typical usage with a texture:
     renderer.BindMaterialTextures(material);
     // ...
     albedo.Destroy(gpus[0].Device());   // before DestroyRenderer
+
+---
+
+## VX::VXLight and Lighting
+
+Directional Blinn-Phong lighting. Entirely opt-in — a renderer created without
+`VXFlags::RENDERER_USE_LIGHTS` ignores lighting entirely and its materials' pipelines don't
+even have the light descriptor set bound; `SubmitLight` becomes a harmless no-op.
+
+    VX::VXLight light;
+    light.SetDirection(-0.8f, -0.5f, 0.3f);   // or SetDirection(VX::VXVec3)
+    light.SetColor(1.0f, 1.0f, 1.0f);         // or SetColor(VX::VXVec3)
+    light.SetIntensity(1.5f);
+
+    VX::VXVec3 light.GetDirection();
+    VX::VXVec3 light.GetColor();
+    float      light.GetIntensity();
+
+Defaults if left unset: direction `(0, -1, 0)` (straight down), color white, intensity `1.0`.
+`SetDirection` always normalizes.
+
+### Submitting and lifetime
+
+    renderer.SubmitLight(light);   // call every frame a light should affect -- same pattern as Submit() for meshes
+
+There is no persistent light list on the renderer. The light queue is cleared automatically
+after every `Render()` call, exactly like the mesh draw queue — a light that isn't resubmitted
+next frame simply stops affecting the scene that frame. To make a light disappear after some
+time, just stop calling `SubmitLight` for it (e.g. gate the call on an elapsed-time check in
+the game loop); there is no `RemoveLight`/light handle to manage.
+
+### Capacity
+
+**There is no cap on the number of simultaneously submitted lights, ever.** Lights are stored
+in an internally-managed, dynamically-growing GPU storage buffer (SSBO), not a fixed-size
+uniform array. Capacity grows by doubling as needed and this is entirely internal — it is
+never exposed to game code, there is no capacity parameter anywhere in the public API, and
+there is no practical reason to ever expect a submission to silently fail or be dropped for
+capacity reasons.
+
+### Shader-side layout
+
+A lit material (built against a renderer with `RENDERER_USE_LIGHTS`) gets an additional
+descriptor set (set = 2) bound automatically — a readonly storage buffer of the currently
+submitted lights, with an explicit `uint count` header:
+
+    struct LightData {
+        vec3 direction;
+        float intensity;
+        vec3 color;
+        float _pad;
+    };
+
+    layout(set = 2, binding = 0) readonly buffer LightBuffer {
+        uint count;
+        // std430 pads the array to start at byte offset 16 regardless of count's own size --
+        // this matches the engine's internal GPULight layout exactly.
+        LightData lights[];
+    } lightBuffer;
+
+**Always loop with `lightBuffer.count`, never `lightBuffer.lights.length()`.** `.length()`
+reflects the SSBO's full allocated capacity (which only grows, never shrinks), not how many
+lights were actually submitted this frame — looping over it instead of `count` means stale
+light data from an earlier, larger submission keeps affecting the scene even after fewer (or
+zero) lights are submitted:
+
+    // CORRECT
+    for (uint i = 0; i < lightBuffer.count; i++) { /* ... */ }
+
+    // WRONG -- reads past what was actually submitted this frame
+    for (int i = 0; i < lightBuffer.lights.length(); i++) { /* ... */ }
+
+Full lit fragment shader (Blinn-Phong, directional only, no shadows):
+
+    #version 450
+
+    layout(location = 0) in vec4 fragColor;
+    layout(location = 1) in vec2 fragUV;
+    layout(location = 2) in vec3 fragNormal;
+
+    layout(location = 0) out vec4 outColor;
+
+    layout(set = 1, binding = 0) uniform sampler2D albedoTex;
+
+    struct LightData {
+        vec3 direction;
+        float intensity;
+        vec3 color;
+        float _pad;
+    };
+
+    layout(set = 2, binding = 0) readonly buffer LightBuffer {
+        uint count;
+        LightData lights[];
+    } lightBuffer;
+
+    const float AMBIENT = 0.1;
+    const float SHININESS = 16.0;
+
+    void main() {
+        vec4 albedo = texture(albedoTex, fragUV) * fragColor;
+        vec3 N = normalize(fragNormal);
+
+        vec3 lighting = vec3(AMBIENT);
+
+        for (uint i = 0; i < lightBuffer.count; i++) {
+            vec3 L = normalize(-lightBuffer.lights[i].direction);
+            float diff = max(dot(N, L), 0.0);
+
+            vec3 H = normalize(L + N);
+            float spec = pow(max(dot(N, H), 0.0), SHININESS);
+
+            lighting += lightBuffer.lights[i].color * lightBuffer.lights[i].intensity * (diff + spec);
+        }
+
+        outColor = vec4(albedo.rgb * lighting, albedo.a);
+    }
+
+Matching vertex shader (adds a normal attribute and passes it through, normal-mapped by the
+model matrix — only correct for rotation/uniform-scale/translation, not non-uniform scale,
+since there's no inverse-transpose yet):
+
+    #version 450
+
+    layout(location = 0) in vec3 inPosition;
+    layout(location = 1) in vec4 inColor;
+    layout(location = 2) in vec2 inUV;
+    layout(location = 3) in vec3 inNormal;
+
+    layout(location = 0) out vec4 fragColor;
+    layout(location = 1) out vec2 fragUV;
+    layout(location = 2) out vec3 fragNormal;
+
+    layout(set = 0, binding = 0) uniform UBO { mat4 mvp; } ubo;
+    layout(push_constant) uniform PushConstants { mat4 model; } push;
+
+    void main() {
+        gl_Position = ubo.mvp * push.model * vec4(inPosition, 1.0);
+        fragColor = inColor;
+        fragUV = inUV;
+        fragNormal = normalize(mat3(push.model) * inNormal);
+    }
+
+A material built from this shader pair against a renderer WITHOUT `RENDERER_USE_LIGHTS` still
+works — `CreateMaterial` simply omits set 2 from that pipeline's layout and the shader's set-2
+binding is never touched, since the ambient term alone still produces valid (if dim) output.
 
 ---
 
@@ -526,7 +707,16 @@ Plain (non-bitmask) enum, backed by `uint64_t`. **There is no longer a bitmask g
 
     MESH_TRANSPARENT      = 0x00500001
 
-**`RENDERER_2D` and `RENDERER_3D` have been removed entirely.** The renderer is always 3D regardless of flags, and `ctx.CreateRenderer`/`VXRenderer`'s constructor no longer take a flags parameter at all.
+    RENDERER_USE_LIGHTS   = 0x00600001
+
+**`RENDERER_2D` and `RENDERER_3D` have been removed entirely.** The renderer is always 3D regardless of flags. `ctx.CreateRenderer`/`VXRenderer`'s constructor DO take a flags parameter — it currently only gates the lighting system:
+
+    // No lighting (default if the flags argument is omitted entirely)
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0]);
+    // Lighting enabled -- see the "Lighting" section
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0], {VX::VXFlags::RENDERER_USE_LIGHTS});
+
+`MESH_TRANSPARENT`, passed to `renderer.CreateMaterial(...)`, builds that material's pipeline with alpha blending enabled (standard alpha-over) and depth-write disabled (still depth-tested, so it's correctly occluded by opaque geometry in front of it, but doesn't occlude opaque geometry drawn after it). Without this flag a material's pipeline is always fully opaque regardless of any alpha value in `VXVertex::color`'s 4th component — alpha is silently ignored unless the material was built with `MESH_TRANSPARENT`. There is no automatic depth-sorting of transparent draw calls, so overlapping transparent surfaces can still blend in the wrong order; this is fine for a single glass shell (a windshield) but not correct for multiple overlapping transparent layers.
 
 Pass flags as a `std::vector` initializer list, not a bare value, and not OR'd together:
 
@@ -713,26 +903,76 @@ Both have the same interface:
     std::vector<MeshData>&  model.GetMeshes();   // non-const — vertices are modifiable
     bool                    model.IsLoaded();
 
-MeshData struct:
+Both loaders populate real `normal` and `uv` (`TEXCOORD_0`) data — neither stuffs normals into
+vertex color anymore. `GLTFModel` additionally populates full material and scene-graph data
+per mesh, which `OBJModel` does not:
 
     struct MeshData {
         std::vector<VXVertex> vertices;
         std::vector<uint32_t> indices;
         std::string           name;
+        VX::VXMat4            transform;   // GLTFModel only -- baked world transform from node ancestry (TRS/matrix), Identity for OBJModel
+        MaterialRef           material;    // GLTFModel only -- resolved material for this mesh
     };
 
-Normals are mapped into vertex color as a placeholder until these loaders populate real UVs. To override vertex colors after loading:
+    struct MaterialRef {
+        bool                  hasTexture;        // true if a base-color/diffuse texture was resolved
+        fs::path               path;             // set when the texture is an external file referenced by URI
+        std::vector<uint8_t>   bytes;            // set when the texture is embedded (base64 data-URI or GLB bufferView)
+        float                  baseColor[4];     // RGBA factor -- baked into every vertex's color when hasTexture is false,
+                                                  // and multiplied with the sampled texture in the fragment shader when true
+    };
 
-    for (auto& mesh : model.GetMeshes()) {
-        for (auto& vertex : mesh.vertices) {
-            vertex.color[0] = 1.0f;
-            vertex.color[1] = 1.0f;
-            vertex.color[2] = 1.0f;
+`GLTFModel::Load` resolves each mesh's material from either the core glTF workflow
+(`pbrMetallicRoughness.baseColorTexture` / `baseColorFactor`) or, as a fallback when a model
+uses it instead (common in older 3ds Max/Maya exports), the `KHR_materials_pbrSpecularGlossiness`
+extension (`diffuseTexture` / `diffuseFactor`). Exactly one of `path` or `bytes` is populated
+when `hasTexture` is true, never both — check `bytes.empty()` to decide which to load from:
+
+    for (auto& meshData : gltfModel.GetMeshes()) {
+        VX::VXMesh mesh = renderer.CreateMesh(meshData.vertices, meshData.indices);
+
+        std::vector<VX::VXFlags> matFlags = {VX::VXFlags::CULL_BACK};
+        // add VXFlags::MESH_TRANSPARENT here per-mesh if this material's alpha should matter
+        VX::VXMaterial material = renderer.CreateMaterial(litVert, litFrag, matFlags);
+
+        if (meshData.material.hasTexture) {
+            VX::VXTexture tex = meshData.material.bytes.empty()
+                ? renderer.CreateTexture(meshData.material.path)
+                : renderer.CreateTextureFromMemory(meshData.material.bytes);
+            if (tex.GetImage() != VK_NULL_HANDLE)   // definitive per-texture success check -- see VXError section
+                material.SetAlbedo(&tex);
         }
-        meshes.push_back(renderer.CreateMesh(mesh.vertices, mesh.indices));
+        renderer.BindMaterialTextures(material);   // call even with no albedo set
+
+        // Compose the mesh's own baked transform with wherever you're placing the model as a whole
+        VX::VXMat4 worldTransform = modelPlacement * meshData.transform;
+        renderer.Submit(mesh, material, worldTransform.Data());
     }
 
-GLTFModel supports both `.gltf` and `.glb` — extension is detected automatically. A glTF/GLB embedded texture, once decoded to bytes by the loader, can be handed straight to `renderer.CreateTextureFromMemory(bytes)` rather than written to a temporary file first.
+When `hasTexture` is false, `baseColor` is already baked into every vertex's `VXVertex::color`
+by the loader — no extra step needed to get a flat-colored (untextured) material looking right,
+including its alpha component (a `baseColorFactor`/`diffuseFactor` alpha below 1.0 needs
+`VXFlags::MESH_TRANSPARENT` on that mesh's material to actually render as transparent).
+
+`OBJModel`'s `MeshData` has no material/texture data at all — `transform` is always Identity
+and `material` is left default-constructed (`hasTexture = false`); vertex colors come only
+from whatever the `.obj`/`.mtl` loader itself assigns, which is currently nothing (white).
+
+GLTFModel supports both `.gltf` and `.glb` — extension is detected automatically. A glTF/GLB
+embedded texture, once decoded to bytes by the loader, can be handed straight to
+`renderer.CreateTextureFromMemory(bytes)` rather than written to a temporary file first.
+
+**Winding:** `GLTFModel` automatically rewinds every triangle's indices (glTF's CCW front-face
+convention → VXGE's CW pipeline convention) during `Load()` — no action needed by game code.
+See the "Winding order" note in the `VXRenderer` section above for why this exists.
+
+**Scene graph / transform composition:** `GLTFModel` walks the node hierarchy once per `Load()`
+and bakes each mesh's full ancestor chain (translation, quaternion rotation, scale, or a raw
+`matrix` node — whichever the node specifies) into `meshData.transform`. This is a *baked*
+world transform, not a per-node transform you walk yourself — compose it with your own
+placement matrix (`modelPlacement * meshData.transform`), do not try to re-derive node parentage
+from the loaded `MeshData` list.
 
 ---
 
@@ -798,13 +1038,16 @@ This is the canonical VXGE game loop. Do not deviate from this structure.
 
 ## Vertex Shader Minimum Requirements
 
+`VXVertex::color` is 4 floats (RGBA) — `inColor`/`fragColor` must be declared `vec4`, not
+`vec3`, or the vertex attribute binding will mismatch `VK_FORMAT_R32G32B32A32_SFLOAT`.
+
     #version 450
 
     layout(location = 0) in vec3 inPosition;
-    layout(location = 1) in vec3 inColor;
+    layout(location = 1) in vec4 inColor;
     layout(location = 2) in vec2 inUV;
 
-    layout(location = 0) out vec3 fragColor;
+    layout(location = 0) out vec4 fragColor;
     layout(location = 1) out vec2 fragUV;
 
     layout(set = 0, binding = 0) uniform UBO {
@@ -825,7 +1068,7 @@ Fragment shader minimum (textured):
 
     #version 450
 
-    layout(location = 0) in vec3 fragColor;
+    layout(location = 0) in vec4 fragColor;
     layout(location = 1) in vec2 fragUV;
 
     layout(location = 0) out vec4 outColor;
@@ -833,10 +1076,14 @@ Fragment shader minimum (textured):
     layout(set = 1, binding = 0) uniform sampler2D albedoTex;
 
     void main() {
-        outColor = texture(albedoTex, fragUV) * vec4(fragColor, 1.0);
+        outColor = texture(albedoTex, fragUV) * fragColor;
     }
 
-If a material will never have a texture bound to it, the fragment shader can skip the `albedoTex` sampler and just output `vec4(fragColor, 1.0)` — but note that `CreateMaterial`'s pipeline layout always reserves set 1 for textures regardless, so a pipeline built this way still works correctly against a material that does have `BindMaterialTextures` called on it (sampling the renderer's white fallback texture).
+If a material will never have a texture bound to it, the fragment shader can skip the `albedoTex` sampler and just output `fragColor` directly — but note that `CreateMaterial`'s pipeline layout always reserves set 1 for textures regardless, so a pipeline built this way still works correctly against a material that does have `BindMaterialTextures` called on it (sampling the renderer's white fallback texture).
+
+For a renderer created with `VXFlags::RENDERER_USE_LIGHTS`, use the full lit shader pair
+(with `inNormal`/`fragNormal` and the set=2 light buffer) given in the "Lighting" section
+above instead of this bare-minimum pair.
 
 ---
 
@@ -891,3 +1138,9 @@ VXGE vendors `stb_image.h` (single-header, `External/stb/`) for texture decoding
 - Forgetting to call `renderer.BindMaterialTextures(material)` — a material's texture descriptor set (set = 1) is not created automatically just by calling `SetAlbedo()`; you must call `BindMaterialTextures` afterward (or at all, even with no albedo) before the material is first submitted.
 - Creating a mesh with shared vertices across differently-UV'd triangle faces (e.g. a naively-shared pyramid apex/base) — this distorts the sampled texture on those faces. Give each face its own unshared vertices with clean per-corner UVs.
 - Forgetting `inUV`/`fragUV` (location 2 / location 1 out) in the vertex shader, or the `vec2 fragUV` varying in the fragment shader, when writing a shader meant to be used with `VXMaterial`'s textured pipeline — the vertex attribute layout `CreateMaterial` builds expects a 3rd attribute (location 2, `VK_FORMAT_R32G32_SFLOAT`) bound to `VXVertex::uv`.
+- Declaring `inColor`/`fragColor` as `vec3` in a shader — `VXVertex::color` is 4 floats (`VK_FORMAT_R32G32B32A32_SFLOAT`); a `vec3` attribute mismatches the binding and either fails pipeline creation or reads garbage into the next attribute.
+- Writing a 3-value brace-initializer for `VXVertex::color` (e.g. `{1.0f, 1.0f, 1.0f}`) — the 4th slot (alpha) zero-fills to fully transparent. Always write all 4 components.
+- Building a material that needs real transparency (e.g. glass) without `VXFlags::MESH_TRANSPARENT` — without it, the pipeline is opaque regardless of any vertex or texture alpha, and the 4th color component (or a `baseColorFactor`/`diffuseFactor` alpha < 1.0 from glTF) is silently ignored.
+- Setting all three scale components AND the matrix's `m[15]` (homogeneous W) to the same scale factor when hand-building a scale matrix — `m[15]` must always stay `1.0f`; setting it to anything else corrupts every downstream transform (translation, projection) regardless of how "correct" the scale value itself looks, and the mesh will appear not to scale at all (or move/distort unpredictably) no matter what value is tried.
+- Building hand-authored (non-glTF) mesh data with counter-clockwise (OpenGL/glTF-style) front-face winding — VXGE's pipelines are built with `frontFace = VK_FRONT_FACE_CLOCKWISE`; CCW-wound data culls the wrong face, which looks correct from most angles but shows the *inside* of thin/closed geometry (e.g. a tire) from others. `GLTFModel` already corrects for this automatically; only hand-authored data needs to be wound CW yourself.
+- Matching glTF mesh names by a guessed/partial string (e.g. for a per-mesh material-override or skip-list in game code) without checking the actual name in the file — glTF node/mesh names from DCC tools often contain extra suffixes or namespacing (e.g. `polySurface318_mafina2hdri:lambert9_0`, not just `mafina2hdrilambert9`); a mismatched substring silently matches nothing and the intended mesh-specific behavior (e.g. applying `MESH_TRANSPARENT` to glass) never triggers, with no error anywhere.
