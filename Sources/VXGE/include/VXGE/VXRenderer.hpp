@@ -10,6 +10,7 @@
 #include "VXMaterial.hpp"
 #include "VXMath.hpp"
 #include "VXCamera.hpp"
+#include "VXTexture.hpp"
 
 namespace fs = std::filesystem;
 
@@ -26,7 +27,7 @@ namespace VX {
     class VXRenderer {
     public:
         VXRenderer() = default;
-        VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance, VXFlags flags);
+        VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance);
         ~VXRenderer();
 
         bool Populate();
@@ -36,7 +37,22 @@ namespace VX {
 
         VXMesh CreateMesh(const std::vector<VXVertex>& vertices, const std::vector<uint32_t>& indices);
         VXMaterial CreateMaterial(const fs::path& vertShaderPath, const fs::path& fragShaderPath,
-                                  VXFlags cullMode = VXFlags::CULL_BACK);
+                                  const std::vector<VXFlags>& flags = {VXFlags::CULL_BACK});
+        VXTexture CreateTexture(const fs::path& imagePath);
+
+        // Decodes an encoded image (PNG/JPG/etc.) read from an already-open POSIX file
+        // descriptor at the given byte range, e.g. a texture packed inside an archive or
+        // package file. Does not take ownership of or close the fd.
+        VXTexture CreateTextureFromFD(int fd, size_t offset, size_t size);
+
+        // Decodes an encoded image already sitting in memory, e.g. a glTF/GLB embedded
+        // or base64 texture that was decoded by the model loader into a byte buffer.
+        VXTexture CreateTextureFromMemory(const uint8_t* data, size_t size);
+        VXTexture CreateTextureFromMemory(const std::vector<uint8_t>& data);
+
+        // Allocates/updates this material's per-material descriptor set (set = 1) from its
+        // currently assigned Albedo texture. Call after SetAlbedo() and before first Submit().
+        void BindMaterialTextures(VXMaterial& material);
 
         void SetCamera(const VXCamera& camera);
 
@@ -54,7 +70,6 @@ namespace VX {
         VXWindow* m_window = nullptr;
         VXGraphics* m_graphics = nullptr;
         VkInstance m_instance = VK_NULL_HANDLE;
-        VXFlags m_flags = VXFlags::NONE;
 
         VkSurfaceKHR m_surface = VK_NULL_HANDLE;
         VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
@@ -83,6 +98,15 @@ namespace VX {
         std::vector<VkDeviceMemory> m_uboMemory;
         std::vector<void*> m_uboMapped;
 
+        // Set = 1: per-material texture bindings (currently just Albedo, binding 0).
+        VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool m_materialDescriptorPool = VK_NULL_HANDLE;
+        VkSampler m_defaultSampler = VK_NULL_HANDLE;
+
+        // 1x1 opaque white texture bound to materials with no Albedo assigned, so an
+        // untextured material still samples something valid instead of garbage memory.
+        VXTexture m_whiteTexture;
+
         static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
         std::chrono::high_resolution_clock::time_point m_frameStart;
@@ -106,12 +130,28 @@ namespace VX {
         void createDescriptorSets();
         void updateUBO(const VXMat4& mvp);
 
+        void createMaterialSetLayout();
+        void createMaterialDescriptorPool();
+        void createDefaultSampler();
+
         uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
         void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkMemoryPropertyFlags properties,
                           VkBuffer& buffer, VkDeviceMemory& memory);
         void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size);
         VkShaderModule loadShader(const fs::path& path);
+
+        void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                         VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                         VkImage& image, VkDeviceMemory& memory);
+        // Shared upload path for CreateTexture/CreateTextureFromFD/CreateTextureFromMemory:
+        // takes already-decoded RGBA8 pixels and produces a sampled, shader-read-only VXTexture.
+        VXTexture createTextureFromPixels(const unsigned char* pixels, uint32_t width, uint32_t height);
+        void transitionImageLayout(VkImage image, VkFormat format,
+                                   VkImageLayout oldLayout, VkImageLayout newLayout);
+        void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+        VkCommandBuffer beginOneTimeCommands();
+        void endOneTimeCommands(VkCommandBuffer cmd);
     };
 }
 

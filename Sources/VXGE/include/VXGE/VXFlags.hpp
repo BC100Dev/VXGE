@@ -1,9 +1,15 @@
 #ifndef VXGE_FLAGS_HPP
 #define VXGE_FLAGS_HPP
 
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
 namespace VX {
+    // Plain (non-bitmask) flag enum. Functions that used to take one OR'd VXFlags value now
+    // take a std::vector<VXFlags> instead, so there is no need for these values to live in
+    // non-overlapping bit groups any more; the numbering below is kept only for readability
+    // and stability, not for bitwise combination.
     enum class VXFlags : uint64_t {
         NONE = 0,
 
@@ -13,9 +19,6 @@ namespace VX {
         WINDOW_WINDOWED = 0x00200002,
         WINDOW_BORDERLESS = 0x00200003,
 
-        RENDERER_2D = 0x00300001,
-        RENDERER_3D = 0x00300002,
-
         CULL_NONE = 0x00400001,
         CULL_BACK = 0x00400002,
         CULL_FRONT = 0x00400003,
@@ -24,12 +27,8 @@ namespace VX {
         MESH_TRANSPARENT =  0x00500001,
     };
 
-    inline VXFlags operator|(VXFlags a, VXFlags b) {
-        return static_cast<VXFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-    }
-
-    inline bool operator&(VXFlags a, VXFlags b) {
-        return (static_cast<uint32_t>(a) & 0x00FFFFFF) & (static_cast<uint32_t>(b) & 0x00FFFFFF);
+    inline bool HasFlag(const std::vector<VXFlags>& flags, VXFlags flag) {
+        return std::find(flags.begin(), flags.end(), flag) != flags.end();
     }
 }
 

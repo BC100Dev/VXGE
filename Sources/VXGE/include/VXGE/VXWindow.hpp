@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -15,7 +16,8 @@ namespace VX {
     class VXWindow {
     public:
         VXWindow() = default;
-        VXWindow(const std::string& title, const VXMonitor& monitor, VXFlags flags);
+        VXWindow(const std::string& title, const VXMonitor& monitor, const std::vector<VXFlags>& flags);
+        VXWindow(const std::string& title, uint32_t width, uint32_t height, const std::vector<VXFlags>& flags);
         ~VXWindow();
 
         bool Populate();
@@ -46,7 +48,7 @@ namespace VX {
         std::string m_title;
         int m_width = 0;
         int m_height = 0;
-        VXFlags m_flags = VXFlags::NONE;
+        std::vector<VXFlags> m_flags;
         SDL_Window* m_window = nullptr;
         bool m_closing = false;
         bool m_mouseLocked = false;

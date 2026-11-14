@@ -107,7 +107,7 @@ namespace VX {
         return monitors;
     }
 
-    VXWindow VXEngine::CreateWindow(const std::string& title, const VXMonitor& monitor, VXFlags flags) {
+    VXWindow VXEngine::CreateWindow(const std::string& title, const VXMonitor& monitor, const std::vector<VXFlags>& flags) {
         if (m_contextLocked) {
             SetLastError(VXError("Window and Renderer context have been locked"));
             return {};
@@ -116,13 +116,22 @@ namespace VX {
         return VXWindow(title, monitor, flags);
     }
 
-    VXRenderer VXEngine::CreateRenderer(VXWindow& window, VXGraphics& graphics, VXFlags flags) {
+    VXWindow VXEngine::CreateWindow(const std::string& title, uint32_t width, uint32_t height, const std::vector<VXFlags>& flags) {
         if (m_contextLocked) {
             SetLastError(VXError("Window and Renderer context have been locked"));
             return {};
         }
 
-        return VXRenderer(window, graphics, m_instance, flags);
+        return VXWindow(title, width, height, flags);
+    }
+
+    VXRenderer VXEngine::CreateRenderer(VXWindow& window, VXGraphics& graphics) {
+        if (m_contextLocked) {
+            SetLastError(VXError("Window and Renderer context have been locked"));
+            return {};
+        }
+
+        return VXRenderer(window, graphics, m_instance);
     }
 
     void VXEngine::ShowWindow(VXWindow& window) {

@@ -1,6 +1,6 @@
 ---
 name: vxge
-description: "Reference guide for writing correct C++ game code using VXGE (Vulkan-powered Game Engine). Use when working on any project that includes VXGE, when writing code that uses VX:: namespace classes, when setting up a game loop, renderer, window, camera, input, or model loading with VXGE. Covers all public API methods, correct method names, initialization order, destruction order, shader requirements, and common mistakes."
+description: "Reference guide for writing correct C++ game code using VXGE (Vulkan-powered Game Engine). Use when working on any project that includes VXGE, when writing code that uses VX:: namespace classes, when setting up a game loop, renderer, window, camera, input, textures, or model loading with VXGE. Covers all public API methods, correct method names, initialization order, destruction order, shader requirements, and common mistakes."
 ---
 
 # VXGE — Vulkan-powered Game Engine — AI Skill Reference
@@ -23,7 +23,7 @@ Single umbrella header for full access:
 
     #include <VXGE/VX.hpp>
 
-`VX.hpp` now includes `VXAudio.hpp` and `VXOverlay.hpp` — both are part of the umbrella header.
+`VX.hpp` includes `VXAudio.hpp`, `VXCamera.hpp`, `VXEngine.hpp`, `VXError.hpp`, `VXEvent.hpp`, `VXFlags.hpp`, `VXGraphics.hpp`, `VXHaptic.hpp`, `VXKey.hpp`, `VXMaterial.hpp`, `VXMath.hpp`, `VXMesh.hpp`, `VXMonitor.hpp`, `VXOverlay.hpp`, `VXRenderer.hpp`, `VXTexture.hpp`, and `VXWindow.hpp`.
 
 Individual headers if needed:
 
@@ -34,6 +34,7 @@ Individual headers if needed:
     #include <VXGE/VXRenderer.hpp>
     #include <VXGE/VXMesh.hpp>
     #include <VXGE/VXMaterial.hpp>
+    #include <VXGE/VXTexture.hpp>
     #include <VXGE/VXCamera.hpp>
     #include <VXGE/VXMath.hpp>
     #include <VXGE/VXEvent.hpp>
@@ -61,10 +62,14 @@ This order is mandatory. Deviating from it causes Vulkan validation errors or cr
     std::vector<VX::VXGraphics> gpus     = ctx.EnumerateGraphicsCards();
     std::vector<VX::VXMonitor>  monitors = ctx.EnumerateMonitors();
 
-    VX::VXWindow wnd = ctx.CreateWindow("Title", monitors[0], VX::VXFlags::WINDOW_WINDOWED);
+    // Monitor-based (sized to the monitor) ...
+    VX::VXWindow wnd = ctx.CreateWindow("Title", monitors[0], {VX::VXFlags::WINDOW_WINDOWED});
+    // ... or explicit-size (use this for an actual windowed, non-monitor-filling window)
+    VX::VXWindow wnd = ctx.CreateWindow("Title", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
     wnd.Populate();
 
-    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0], VX::VXFlags::RENDERER_3D);
+    // No flags parameter any more — the renderer is always 3D.
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0]);
     renderer.Populate();
 
     // Optional overlay (ImGui-backed, must be created after renderer.Populate())
@@ -74,6 +79,7 @@ This order is mandatory. Deviating from it causes Vulkan validation errors or cr
     // ... game loop ...
 
     overlay.Destroy();
+    texture.Destroy(gpus[0].Device());   // any VXTexture you created yourself (see VX::VXTexture below)
     mesh.Destroy(gpus[0].Device());
     material.Destroy(gpus[0].Device());
     ctx.DestroyRenderer(renderer);
@@ -82,6 +88,8 @@ This order is mandatory. Deviating from it causes Vulkan validation errors or cr
     ctx.Shutdown();
 
 Calling `ctx.Shutdown()` before destroying graphics will cause `vkDestroyDevice: Invalid device` because the Vulkan instance is destroyed before the logical devices. Use `ctx.DestroyGraphics(gpus)` instead of `gpus.clear()` — it properly calls `gpu.Destroy()` on each entry before clearing.
+
+Destroy any `VXTexture` you created yourself (via `renderer.CreateTexture`/`CreateTextureFromFD`/`CreateTextureFromMemory`) before `ctx.DestroyRenderer(renderer)`. Do this for every texture you created, even one assigned to a material — `VXTexture::Destroy()` does **not** destroy the shared sampler (see the `VX::VXTexture` section below), so destroying one texture does not break any other texture that happens to share the same sampler.
 
 ---
 
@@ -105,9 +113,14 @@ Central orchestrator. Always stack-allocated, never heap-allocated with `new`.
     std::vector<VX::VXMonitor>  ctx.EnumerateMonitors();
     std::vector<VX::VXHaptic>   ctx.EnumerateHapticDevices();
 
-    VX::VXWindow   ctx.CreateWindow(title, monitor, flags);
-    VX::VXRenderer ctx.CreateRenderer(window, graphics, flags);
-    VX::VXOverlay  ctx.CreateOverlay(window, graphics, renderer);   // must call after renderer.Populate()
+    VX::VXWindow   ctx.CreateWindow(title, monitor, flags);          // sized to the monitor
+    VX::VXWindow   ctx.CreateWindow(title, width, height, flags);    // explicit size — use for a real windowed window
+    VX::VXRenderer ctx.CreateRenderer(window, graphics);             // no flags — renderer is always 3D
+    VX::VXOverlay  ctx.CreateOverlay(window, graphics, renderer);    // must call after renderer.Populate()
+
+Both `CreateWindow` overloads take `const std::vector<VX::VXFlags>&`, not a single bare `VXFlags` value:
+
+    VX::VXWindow wnd = ctx.CreateWindow("Title", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
 
 TickTime() returns true on the very first call — use this to skip the first frame's garbage delta:
 
@@ -158,16 +171,20 @@ Wraps display information. Returned by `EnumerateMonitors()`. Pure data, no Vulk
 
 ## VX::VXWindow
 
-Wraps SDL3 window and Vulkan surface creation.
+Wraps SDL3 window and Vulkan surface creation. Has two constructor shapes, matching the two `ctx.CreateWindow` overloads: one sized to a `VXMonitor`, and one taking an explicit width/height. **Use the explicit-size overload when you actually want a windowed (non-monitor-filling) window** — the monitor-based overload sizes the window to the monitor's own resolution regardless of `WINDOW_WINDOWED`.
 
-    VX::VXWindow wnd = ctx.CreateWindow("Title", monitors[0], VX::VXFlags::WINDOW_WINDOWED);
+    // Sized to the monitor
+    VX::VXWindow wnd = ctx.CreateWindow("Title", monitors[0], {VX::VXFlags::WINDOW_WINDOWED});
+    // Explicit size — produces an actual windowed-sized window
+    VX::VXWindow wnd = ctx.CreateWindow("Title", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
+
     bool ok = wnd.Populate();   // finalizes SDL3 window creation — must be called before use
 
     bool               wnd.IsClosing();          // returns true when window close is requested
     void               wnd.PollEvents();         // must be called every frame — updates input state
     const std::string& wnd.Title();              // window title
     uint32_t           wnd.Width();              // window width in pixels
-    uint32_t           wnd.Height();             // window height in pixels
+    uint32_t           wnd.Height();              // window height in pixels
     SDL_Window*        wnd.SDLWindow();          // raw SDL handle — only use internally in VXGE
     bool               wnd.IsKeyHeld(VXKey);     // returns true if key is currently held down
     void               wnd.LockMouse();          // locks cursor, enables relative mouse mode
@@ -195,18 +212,29 @@ VXWindow is NOT copyable. Move-only.
 
 ## VX::VXRenderer
 
-Wraps swapchain, render pass, framebuffers, command buffers, sync objects, descriptor sets, UBO, and depth buffer.
+Wraps swapchain, render pass, framebuffers, command buffers, sync objects, descriptor sets, UBO, depth buffer, and the per-material texture descriptor set layout/pool/sampler.
 
-    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0], VX::VXFlags::RENDERER_3D);
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, gpus[0]);   // no flags — always 3D
     bool ok = renderer.Populate();   // must be called before use
 
     VX::VXMesh     renderer.CreateMesh(vertices, indices);
-    VX::VXMaterial renderer.CreateMaterial(vertSpvPath, fragSpvPath, cullMode = VXFlags::CULL_BACK);
+    VX::VXMaterial renderer.CreateMaterial(vertShaderPath, fragShaderPath,
+                                            flags = {VX::VXFlags::CULL_BACK});
+
+    VX::VXTexture  renderer.CreateTexture(imagePath);                       // decode PNG/JPG/etc. from a file path
+    VX::VXTexture  renderer.CreateTextureFromFD(fd, offset, size);          // decode from an open POSIX fd + byte range
+    VX::VXTexture  renderer.CreateTextureFromMemory(const uint8_t* data, size_t size);
+    VX::VXTexture  renderer.CreateTextureFromMemory(const std::vector<uint8_t>& data);
+
+    void renderer.BindMaterialTextures(material);     // allocates/updates material's texture descriptor set (set=1)
+                                                        // from its currently assigned Albedo texture.
+                                                        // Call after material.SetAlbedo() (or with no Albedo at all)
+                                                        // and before the material's first Submit().
 
     void renderer.Submit(mesh, material, transform);   // queues a draw call for this frame
-    void renderer.SetCamera(camera);                   // uploads VP matrix to UBO
-    void renderer.Render();                            // submits frame, presents, clears queue
-    void renderer.Destroy();                           // explicit cleanup — also called by destructor
+    void renderer.SetCamera(camera);                    // uploads VP matrix to UBO
+    void renderer.Render();                             // submits frame, presents, clears queue
+    void renderer.Destroy();                            // explicit cleanup — also called by destructor
 
     void renderer.SetTargetFPS(int fps);               // enables FPS cap
     void renderer.ClearTargetFPS();                    // removes FPS cap
@@ -218,19 +246,48 @@ Wraps swapchain, render pass, framebuffers, command buffers, sync objects, descr
     VkRenderPass     renderer.GetRenderPass();
     VkCommandBuffer  renderer.GetCurrentCommandBuffer();
 
+### Texture loading
+
+    // From a file path (decoded via stb_image)
+    VX::VXTexture tex = renderer.CreateTexture(fs::path("textures/checker.png"));
+
+    // From an already-open file descriptor at a byte range — e.g. a texture packed
+    // inside an archive/package file. Does not take ownership of or close the fd.
+    VX::VXTexture tex = renderer.CreateTextureFromFD(fd, offset, size);
+
+    // From an in-memory byte buffer — e.g. a glTF/GLB embedded texture already
+    // decoded into bytes by a model loader.
+    std::vector<uint8_t> bytes = /* ... */;
+    VX::VXTexture tex = renderer.CreateTextureFromMemory(bytes);
+    // or, with a raw pointer + explicit size:
+    VX::VXTexture tex = renderer.CreateTextureFromMemory(bytes.data(), bytes.size());
+
+Every texture obtained this way must be bound to a material and destroyed by the caller:
+
+    material.SetAlbedo(&tex);
+    renderer.BindMaterialTextures(material);
+    // ... later, before DestroyRenderer:
+    tex.Destroy(gpus[0].Device());
+
+A material with no Albedo assigned still needs `BindMaterialTextures(material)` called on it once — this gives it a valid descriptor set bound to the renderer's internal 1x1 white fallback texture, instead of leaving it with no descriptor set at all.
+
 Shaders must be pre-compiled SPIR-V `.spv` files. VXGE does not compile GLSL at runtime. Compile with:
 
     glslc shader.vert -o shader.vert.spv
     glslc shader.frag -o shader.frag.spv
 
-The vertex shader MUST have this layout:
+The vertex shader MUST have this layout (set 0 = per-frame UBO):
 
-    layout(binding = 0) uniform UBO { mat4 mvp; } ubo;
+    layout(set = 0, binding = 0) uniform UBO { mat4 mvp; } ubo;
     layout(push_constant) uniform PushConstants { mat4 model; } push;
 
     void main() {
         gl_Position = ubo.mvp * push.model * vec4(inPosition, 1.0);
     }
+
+If the material has a texture bound, the fragment shader samples it from set 1, binding 0:
+
+    layout(set = 1, binding = 0) uniform sampler2D albedoTex;
 
 VXRenderer is NOT copyable. Move-only.
 
@@ -241,9 +298,9 @@ VXRenderer is NOT copyable. Move-only.
 Holds GPU vertex and index buffers. Created via `renderer.CreateMesh()`.
 
     std::vector<VX::VXVertex> vertices = {
-        {{ 0.0f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }},
-        {{ 0.5f,  0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }},
-        {{-0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }},
+        {{ 0.0f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, 0.0f }},
+        {{ 0.5f,  0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f }},
+        {{-0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }},
     };
     std::vector<uint32_t> indices = { 0, 1, 2 };
 
@@ -255,20 +312,69 @@ VXVertex layout:
     struct VXVertex {
         float position[3];   // location 0 in vertex shader
         float color[3];      // location 1 in vertex shader
+        float uv[2];         // location 2 in vertex shader — defaults to {0.0f, 0.0f}
     };
+
+When building a textured mesh out of shared triangle vertices (e.g. faces of a pyramid), give each triangle its own unshared vertices with clean corner UVs rather than reusing vertices with a single averaged UV across differently-oriented faces — sharing vertices across faces with different UV orientations stretches/distorts the texture sampling on those faces.
 
 ---
 
 ## VX::VXMaterial
 
-Holds a compiled Vulkan graphics pipeline. Created via `renderer.CreateMaterial()`.
+Holds a compiled Vulkan graphics pipeline plus the engine's PBR texture slots. Created via `renderer.CreateMaterial()`.
 
     VX::VXMaterial material = renderer.CreateMaterial(
         fs::path("/path/to/shader.vert.spv"),
         fs::path("/path/to/shader.frag.spv"),
-        VX::VXFlags::CULL_BACK   // optional, defaults to CULL_BACK
+        {VX::VXFlags::CULL_BACK}   // optional, defaults to {VXFlags::CULL_BACK}
     );
-    material.Destroy(gpus[0].Device());   // must be called before DestroyRenderer
+
+    VkPipeline       material.GetPipeline();
+    VkPipelineLayout material.GetPipelineLayout();
+
+    // PBR texture slots. Only Albedo is currently sampled by the default pipeline/descriptor
+    // layout — Normal, RoughnessMetallic and AO are carried on the material for future use by
+    // loaders and content pipelines, but the renderer does not yet bind or sample them.
+    void material.SetAlbedo(VX::VXTexture* texture);
+    void material.SetNormal(VX::VXTexture* texture);
+    void material.SetRoughnessMetallic(VX::VXTexture* texture);
+    void material.SetAO(VX::VXTexture* texture);
+
+    VX::VXTexture* material.GetAlbedo();
+    VX::VXTexture* material.GetNormal();
+    VX::VXTexture* material.GetRoughnessMetallic();
+    VX::VXTexture* material.GetAO();
+
+    // Per-material descriptor set (set = 1). Normally you don't touch these directly —
+    // renderer.BindMaterialTextures(material) manages them for you.
+    VkDescriptorSet material.GetDescriptorSet();
+    void            material.SetDescriptorSet(VkDescriptorSet set);
+
+    material.Destroy(gpus[0].Device());   // must be called before DestroyRenderer — destroys pipeline + layout only
+
+Typical usage with a texture:
+
+    VX::VXTexture albedo = renderer.CreateTexture(fs::path("textures/checker.png"));
+    material.SetAlbedo(&albedo);
+    renderer.BindMaterialTextures(material);
+    // ...
+    albedo.Destroy(gpus[0].Device());   // before DestroyRenderer
+
+---
+
+## VX::VXTexture
+
+Wraps a Vulkan sampled image (image, view, memory) plus a sampler handle. Created via `renderer.CreateTexture()` / `renderer.CreateTextureFromFD()` / `renderer.CreateTextureFromMemory()` — never constructed directly with real data by game code.
+
+    VkImage      texture.GetImage();
+    VkImageView  texture.GetImageView();
+    VkSampler    texture.GetSampler();
+    uint32_t     texture.GetWidth();
+    uint32_t     texture.GetHeight();
+
+    texture.Destroy(gpus[0].Device());   // must be called before DestroyRenderer
+
+**Sampler ownership is renderer-owned, not per-texture.** Every `VXTexture` produced by a given `VXRenderer` currently shares that renderer's single default sampler (including the renderer's internal 1x1 white fallback texture used for untextured materials). `VXTexture::Destroy()` deliberately does **not** destroy the sampler — it only destroys the image view, image, and device memory — because the sampler is destroyed exactly once by `VXRenderer::Destroy()`. Do not add sampler destruction to a texture cleanup path yourself; doing so double-frees the shared sampler handle (`free(): double free detected in tcache 2` / SIGABRT) the moment more than one texture exists at once.
 
 ---
 
@@ -294,9 +400,9 @@ First-person camera with yaw/pitch rotation and perspective projection. Hand-rol
 
     renderer.SetCamera(camera);           // uploads VP matrix — call every frame before Render()
 
-Aspect ratio for the camera should be computed from the monitor:
+Aspect ratio for the camera should be computed from the **window**, not the monitor — a windowed (`WINDOW_WINDOWED`) window is not the same size as the monitor:
 
-    float aspect = (float)monitors[0].Width() / (float)monitors[0].Height();
+    float aspect = (float)wnd.Width() / (float)wnd.Height();
     VX::VXCamera camera(75.0f, aspect, 0.1f, 100.0f);
 
 ---
@@ -403,34 +509,41 @@ Selected values:
 
 ## VX::VXFlags
 
-Group-partitioned flag enum using `uint64_t`. Upper bytes identify the group, lower bytes are the flag bits. Groups never collide.
+Plain (non-bitmask) enum, backed by `uint64_t`. **There is no longer a bitmask group system and no `operator|`/`operator&`.** Functions that take flags now take `const std::vector<VX::VXFlags>&` instead of a single OR'd value, and membership is checked with the free function `VX::HasFlag`.
 
     NONE                  = 0
 
-    // Metrics group — 0x00100000
     METRICS_SCREEN_DIMENS = 0x00100001
 
-    // Window group — 0x00200000
     WINDOW_FULLSCREEN     = 0x00200001
     WINDOW_WINDOWED       = 0x00200002
     WINDOW_BORDERLESS     = 0x00200003
 
-    // Renderer group — 0x00300000
-    RENDERER_2D           = 0x00300001
-    RENDERER_3D           = 0x00300002
-
-    // Cull mode group — 0x00400000
     CULL_NONE             = 0x00400001
     CULL_BACK             = 0x00400002
     CULL_FRONT            = 0x00400003
     CULL_FRONT_BACK       = 0x00400004
 
-    // Mesh group — 0x00500000
     MESH_TRANSPARENT      = 0x00500001
 
-Flags can be OR'd together within the same group:
+**`RENDERER_2D` and `RENDERER_3D` have been removed entirely.** The renderer is always 3D regardless of flags, and `ctx.CreateRenderer`/`VXRenderer`'s constructor no longer take a flags parameter at all.
 
-    VX::VXFlags::WINDOW_FULLSCREEN | VX::VXFlags::WINDOW_BORDERLESS
+Pass flags as a `std::vector` initializer list, not a bare value, and not OR'd together:
+
+    // CORRECT
+    ctx.CreateWindow("Title", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
+    renderer.CreateMaterial(vert, frag, {VX::VXFlags::CULL_NONE});
+
+    // WRONG — these no longer compile / no longer exist
+    ctx.CreateWindow("Title", monitors[0], VX::VXFlags::WINDOW_WINDOWED);              // bare value
+    VX::VXFlags::WINDOW_FULLSCREEN | VX::VXFlags::WINDOW_BORDERLESS;                   // operator| removed
+    ctx.CreateRenderer(wnd, gpus[0], VX::VXFlags::RENDERER_3D);                        // flag + param both gone
+
+To check whether a vector of flags contains a given flag, use `VX::HasFlag`:
+
+    bool HasFlag(const std::vector<VX::VXFlags>& flags, VX::VXFlags flag);
+
+    if (VX::HasFlag(someFlags, VX::VXFlags::CULL_NONE)) { /* ... */ }
 
 ---
 
@@ -442,7 +555,7 @@ Flags can be OR'd together within the same group:
 
     VX::SetLastError(VX::VXError("message"));
 
-Always check `GetLastError()` after any method that returns `bool` for failure.
+Always check `GetLastError()` after any method that returns `bool` for failure, and after texture-loading calls (`CreateTexture`/`CreateTextureFromFD`/`CreateTextureFromMemory`), which return an empty `VXTexture()` on failure and set the last error instead of throwing.
 
 There is also `VX::VXRuntimeError` (extends `std::runtime_error`) for internal engine throws — game code does not construct these directly.
 
@@ -608,7 +721,7 @@ MeshData struct:
         std::string           name;
     };
 
-Normals are mapped into vertex color as a placeholder until texture support lands. To override vertex colors after loading:
+Normals are mapped into vertex color as a placeholder until these loaders populate real UVs. To override vertex colors after loading:
 
     for (auto& mesh : model.GetMeshes()) {
         for (auto& vertex : mesh.vertices) {
@@ -619,7 +732,7 @@ Normals are mapped into vertex color as a placeholder until texture support land
         meshes.push_back(renderer.CreateMesh(mesh.vertices, mesh.indices));
     }
 
-GLTFModel supports both `.gltf` and `.glb` — extension is detected automatically.
+GLTFModel supports both `.gltf` and `.glb` — extension is detected automatically. A glTF/GLB embedded texture, once decoded to bytes by the loader, can be handed straight to `renderer.CreateTextureFromMemory(bytes)` rather than written to a temporary file first.
 
 ---
 
@@ -630,7 +743,7 @@ This is the canonical VXGE game loop. Do not deviate from this structure.
     ctx.LockWindowContext();
     ctx.ShowWindow(wnd);
 
-    float aspect = (float)monitors[0].Width() / (float)monitors[0].Height();
+    float aspect = (float)wnd.Width() / (float)wnd.Height();
     VX::VXCamera camera(75.0f, aspect, 0.1f, 100.0f);
     camera.SetPosition({ 0.0f, 0.0f, -2.0f });
 
@@ -689,10 +802,12 @@ This is the canonical VXGE game loop. Do not deviate from this structure.
 
     layout(location = 0) in vec3 inPosition;
     layout(location = 1) in vec3 inColor;
+    layout(location = 2) in vec2 inUV;
 
     layout(location = 0) out vec3 fragColor;
+    layout(location = 1) out vec2 fragUV;
 
-    layout(binding = 0) uniform UBO {
+    layout(set = 0, binding = 0) uniform UBO {
         mat4 mvp;
     } ubo;
 
@@ -703,18 +818,25 @@ This is the canonical VXGE game loop. Do not deviate from this structure.
     void main() {
         gl_Position = ubo.mvp * push.model * vec4(inPosition, 1.0);
         fragColor = inColor;
+        fragUV = inUV;
     }
 
-Fragment shader minimum:
+Fragment shader minimum (textured):
 
     #version 450
 
     layout(location = 0) in vec3 fragColor;
+    layout(location = 1) in vec2 fragUV;
+
     layout(location = 0) out vec4 outColor;
 
+    layout(set = 1, binding = 0) uniform sampler2D albedoTex;
+
     void main() {
-        outColor = vec4(fragColor, 1.0);
+        outColor = texture(albedoTex, fragUV) * vec4(fragColor, 1.0);
     }
+
+If a material will never have a texture bound to it, the fragment shader can skip the `albedoTex` sampler and just output `vec4(fragColor, 1.0)` — but note that `CreateMaterial`'s pipeline layout always reserves set 1 for textures regardless, so a pipeline built this way still works correctly against a material that does have `BindMaterialTextures` called on it (sampling the renderer's white fallback texture).
 
 ---
 
@@ -725,13 +847,15 @@ VXGE is designed to be used as a git submodule with `add_subdirectory`. The CMak
     add_subdirectory(vxge)
     target_link_libraries(MyGame PRIVATE VxGameEngine)
 
+VXGE vendors `stb_image.h` (single-header, `External/stb/`) for texture decoding (PNG/JPG/etc.) — no extra dependency needed in consuming projects, it's compiled into `VxGameEngine` itself.
+
 ---
 
 ## Common Mistakes
 
 - Calling `ctx.Shutdown()` before destroying graphics — always call `ctx.DestroyGraphics(gpus)` first.
 - Using `gpus.clear()` instead of `ctx.DestroyGraphics(gpus)` — the latter properly calls `Destroy()` on each gpu before clearing.
-- Calling `mesh.Destroy()` or `material.Destroy()` after `ctx.DestroyRenderer()` — destroy mesh and material first.
+- Calling `mesh.Destroy()`, `material.Destroy()`, or `texture.Destroy()` after `ctx.DestroyRenderer()` — destroy mesh, material, and any textures first.
 - Not calling `wnd.Populate()` before creating a renderer — Populate must be called.
 - Not calling `renderer.Populate()` before the game loop — Populate must be called.
 - Not calling `overlay.Populate()` before using the overlay — Populate must be called.
@@ -750,6 +874,12 @@ VXGE is designed to be used as a git submodule with `add_subdirectory`. The CMak
 - Using `monitor.GetHeight()` — correct method is `monitor.Height()`.
 - Using `wnd.GetTitle()`, `wnd.GetWidth()`, `wnd.GetSDLWindow()` — correct methods are `wnd.Title()`, `wnd.Width()`, `wnd.SDLWindow()`.
 - Using `VXFlags` as `uint32_t` — it is `uint64_t`.
+- Passing a bare `VXFlags` value (e.g. `VX::VXFlags::WINDOW_WINDOWED`) instead of a `std::vector<VXFlags>`/initializer list (e.g. `{VX::VXFlags::WINDOW_WINDOWED}`) — every function that takes flags takes a vector now.
+- Using `operator|` or `operator&` on `VXFlags` — these were removed. Use `VX::HasFlag(flagsVector, flag)` to check membership, and build a vector literal to combine flags.
+- Referencing `VXFlags::RENDERER_2D` or `VXFlags::RENDERER_3D` — both were removed entirely; the renderer is always 3D.
+- Passing a flags argument to `ctx.CreateRenderer(...)` / `VXRenderer`'s constructor — neither takes one any more.
+- Computing camera aspect ratio from the monitor (`monitors[0].Width()/Height()`) instead of the window (`wnd.Width()/Height()`) — these differ for a `WINDOW_WINDOWED` window.
+- Expecting `ctx.CreateWindow(title, monitor, flags)` to produce a smaller windowed window via `WINDOW_WINDOWED` alone — that overload sizes to the monitor regardless of the flag; use the explicit `ctx.CreateWindow(title, width, height, flags)` overload for an actual windowed-sized window.
 - Including model loaders via `VX.hpp` — they are NOT in the umbrella header, include `VXGE/Model/OBJ.hpp` and `VXGE/Model/GLTF.hpp` separately.
 - Using `VXOBJ` or `VXGLTF` — the correct class names are `OBJModel` and `GLTFModel`.
 - Passing `std::string` to `CreateMaterial` — it takes `fs::path`.
@@ -757,3 +887,7 @@ VXGE is designed to be used as a git submodule with `add_subdirectory`. The CMak
 - Trying to copy `OBJModel::MeshData` to modify vertex colors — `GetMeshes()` returns a non-const reference, modify directly.
 - Forgetting the `push_constant` block in the vertex shader — without it, per-object transforms won't work.
 - Loading non-WAV files with VXAudio — only WAV is supported.
+- Assuming `VXTexture::Destroy()` destroys the sampler — it doesn't; the sampler is renderer-owned and shared across every texture that renderer created, and is destroyed exactly once by `VXRenderer::Destroy()`. Destroying it per-texture double-frees it.
+- Forgetting to call `renderer.BindMaterialTextures(material)` — a material's texture descriptor set (set = 1) is not created automatically just by calling `SetAlbedo()`; you must call `BindMaterialTextures` afterward (or at all, even with no albedo) before the material is first submitted.
+- Creating a mesh with shared vertices across differently-UV'd triangle faces (e.g. a naively-shared pyramid apex/base) — this distorts the sampled texture on those faces. Give each face its own unshared vertices with clean per-corner UVs.
+- Forgetting `inUV`/`fragUV` (location 2 / location 1 out) in the vertex shader, or the `vec2 fragUV` varying in the fragment shader, when writing a shader meant to be used with `VXMaterial`'s textured pipeline — the vertex attribute layout `CreateMaterial` builds expects a 3rd attribute (location 2, `VK_FORMAT_R32G32_SFLOAT`) bound to `VXVertex::uv`.

@@ -8,6 +8,7 @@ namespace VX {
     struct VXVertex {
         float position[3];
         float color[3];
+        float uv[2] = {0.0f, 0.0f};
     };
 
     class VXMesh {

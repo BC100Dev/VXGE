@@ -12,11 +12,16 @@
 #include <thread>
 #include <imgui_impl_vulkan.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+#include <unistd.h>
+
 #include "VXOverlayData.hpp"
 
 namespace VX {
-    VXRenderer::VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance, VXFlags flags)
-        : m_window(&window), m_graphics(&graphics), m_instance(instance), m_flags(flags) {
+    VXRenderer::VXRenderer(VXWindow& window, VXGraphics& graphics, VkInstance instance)
+        : m_window(&window), m_graphics(&graphics), m_instance(instance) {
     }
 
     VXRenderer::~VXRenderer() {
@@ -46,11 +51,22 @@ namespace VX {
 
         createDescriptorPool();
         createDescriptorSets();
+        createMaterialSetLayout();
+        createMaterialDescriptorPool();
+        createDefaultSampler();
         createRenderPass();
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
         createSyncObjects();
+
+        // Must come after createCommandPool(): createTextureFromPixels() issues one-time
+        // transfer commands allocated from m_commandPool.
+        {
+            unsigned char whitePixel[4] = {255, 255, 255, 255};
+            m_whiteTexture = createTextureFromPixels(whitePixel, 1, 1);
+        }
+
         return true;
     }
 
@@ -97,7 +113,7 @@ namespace VX {
         vkBindBufferMemory(device, buffer, memory, 0);
     }
 
-    void VXRenderer::copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+    VkCommandBuffer VXRenderer::beginOneTimeCommands() {
         VkDevice device = m_graphics->Device();
 
         VkCommandBufferAllocateInfo allocInfo{};
@@ -113,10 +129,11 @@ namespace VX {
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &beginInfo);
+        return cmd;
+    }
 
-        VkBufferCopy copyRegion{};
-        copyRegion.size = size;
-        vkCmdCopyBuffer(cmd, src, dst, 1, &copyRegion);
+    void VXRenderer::endOneTimeCommands(VkCommandBuffer cmd) {
+        VkDevice device = m_graphics->Device();
         vkEndCommandBuffer(cmd);
 
         VkSubmitInfo submitInfo{};
@@ -126,6 +143,109 @@ namespace VX {
         vkQueueSubmit(m_graphics->GraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
         vkQueueWaitIdle(m_graphics->GraphicsQueue());
         vkFreeCommandBuffers(device, m_commandPool, 1, &cmd);
+    }
+
+    void VXRenderer::copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+        VkCommandBuffer cmd = beginOneTimeCommands();
+
+        VkBufferCopy copyRegion{};
+        copyRegion.size = size;
+        vkCmdCopyBuffer(cmd, src, dst, 1, &copyRegion);
+
+        endOneTimeCommands(cmd);
+    }
+
+    void VXRenderer::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                                 VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                                 VkImage& image, VkDeviceMemory& memory) {
+        VkDevice device = m_graphics->Device();
+
+        VkImageCreateInfo imageInfo{};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = width;
+        imageInfo.extent.height = height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = format;
+        imageInfo.tiling = tiling;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = usage;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        vkCreateImage(device, &imageInfo, nullptr, &image);
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(device, image, &memReqs);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, properties);
+
+        vkAllocateMemory(device, &allocInfo, nullptr, &memory);
+        vkBindImageMemory(device, image, memory, 0);
+    }
+
+    void VXRenderer::transitionImageLayout(VkImage image, VkFormat format,
+                                           VkImageLayout oldLayout, VkImageLayout newLayout) {
+        VkCommandBuffer cmd = beginOneTimeCommands();
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+
+        VkPipelineStageFlags srcStage;
+        VkPipelineStageFlags dstStage;
+
+        if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+            newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        } else {
+            SetLastError(VXError("Unsupported image layout transition in VXRenderer::transitionImageLayout"));
+            endOneTimeCommands(cmd);
+            return;
+        }
+
+        vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        endOneTimeCommands(cmd);
+    }
+
+    void VXRenderer::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+        VkCommandBuffer cmd = beginOneTimeCommands();
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = {width, height, 1};
+
+        vkCmdCopyBufferToImage(cmd, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        endOneTimeCommands(cmd);
     }
 
     VXMesh VXRenderer::CreateMesh(const std::vector<VXVertex>& vertices, const std::vector<uint32_t>& indices) {
@@ -213,7 +333,7 @@ namespace VX {
     }
 
     VXMaterial VXRenderer::CreateMaterial(const fs::path& vertShaderPath, const fs::path& fragShaderPath,
-                                          VXFlags cullFlags) {
+                                          const std::vector<VXFlags>& flags) {
         VkDevice device = m_graphics->Device();
 
         VkShaderModule vertModule = loadShader(vertShaderPath);
@@ -238,7 +358,7 @@ namespace VX {
         bindingDesc.stride = sizeof(VXVertex);
         bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription attrDescs[2]{};
+        VkVertexInputAttributeDescription attrDescs[3]{};
         attrDescs[0].binding = 0;
         attrDescs[0].location = 0;
         attrDescs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -247,12 +367,16 @@ namespace VX {
         attrDescs[1].location = 1;
         attrDescs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
         attrDescs[1].offset = offsetof(VXVertex, color);
+        attrDescs[2].binding = 0;
+        attrDescs[2].location = 2;
+        attrDescs[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attrDescs[2].offset = offsetof(VXVertex, uv);
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &bindingDesc;
-        vertexInput.vertexAttributeDescriptionCount = 2;
+        vertexInput.vertexAttributeDescriptionCount = 3;
         vertexInput.pVertexAttributeDescriptions = attrDescs;
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -280,12 +404,14 @@ namespace VX {
         viewportState.pScissors = &scissor;
 
         VkCullModeFlags vkCullMode = VK_CULL_MODE_BACK_BIT;
-        if (cullFlags == VXFlags::CULL_NONE)
+        if (HasFlag(flags, VXFlags::CULL_NONE))
             vkCullMode = VK_CULL_MODE_NONE;
-        else if (cullFlags == VXFlags::CULL_FRONT)
+        else if (HasFlag(flags, VXFlags::CULL_FRONT))
             vkCullMode = VK_CULL_MODE_FRONT_BIT;
-        else if (cullFlags == VXFlags::CULL_FRONT_BACK)
+        else if (HasFlag(flags, VXFlags::CULL_FRONT_BACK))
             vkCullMode = VK_CULL_MODE_FRONT_AND_BACK;
+        else if (HasFlag(flags, VXFlags::CULL_BACK))
+            vkCullMode = VK_CULL_MODE_BACK_BIT;
 
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -318,10 +444,13 @@ namespace VX {
         pushRange.offset = 0;
         pushRange.size = sizeof(float) * 16;
 
+        // Set 0: per-frame UBO. Set 1: per-material textures (Albedo, binding 0).
+        VkDescriptorSetLayout setLayouts[] = {m_descriptorSetLayout, m_materialSetLayout};
+
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        layoutInfo.setLayoutCount = 1;
-        layoutInfo.pSetLayouts = &m_descriptorSetLayout;
+        layoutInfo.setLayoutCount = 2;
+        layoutInfo.pSetLayouts = setLayouts;
         layoutInfo.pushConstantRangeCount = 1;
         layoutInfo.pPushConstantRanges = &pushRange;
 
@@ -360,6 +489,154 @@ namespace VX {
         return VXMaterial(pipeline, pipelineLayout);
     }
 
+    VXTexture VXRenderer::createTextureFromPixels(const unsigned char* pixels, uint32_t width, uint32_t height) {
+        VkDevice device = m_graphics->Device();
+        VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingMemory;
+        createBuffer(imageSize,
+                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     stagingBuffer, stagingMemory);
+
+        void* data;
+        vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data);
+        memcpy(data, pixels, static_cast<size_t>(imageSize));
+        vkUnmapMemory(device, stagingMemory);
+
+        VkImage image;
+        VkDeviceMemory imageMemory;
+        createImage(width, height,
+                    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, image, imageMemory);
+
+        transitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB,
+                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        copyBufferToImage(stagingBuffer, image, width, height);
+        transitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkImageView imageView;
+        vkCreateImageView(device, &viewInfo, nullptr, &imageView);
+
+        return VXTexture(image, imageMemory, imageView, m_defaultSampler, width, height);
+    }
+
+    VXTexture VXRenderer::CreateTexture(const fs::path& imagePath) {
+        if (!fs::exists(imagePath)) {
+            SetLastError(VXError("Failed to open texture at \"" + imagePath.string() + "\" (File not found)"));
+            return VXTexture();
+        }
+
+        int texWidth, texHeight, texChannels;
+        stbi_uc* pixels = stbi_load(imagePath.string().c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        if (!pixels) {
+            SetLastError(VXError("Failed to decode texture: " + imagePath.string()));
+            return VXTexture();
+        }
+
+        VXTexture texture = createTextureFromPixels(pixels, static_cast<uint32_t>(texWidth),
+                                                    static_cast<uint32_t>(texHeight));
+        stbi_image_free(pixels);
+        return texture;
+    }
+
+    VXTexture VXRenderer::CreateTextureFromFD(int fd, size_t offset, size_t size) {
+        if (fd < 0 || size == 0) {
+            SetLastError(VXError("CreateTextureFromFD: invalid file descriptor or zero-length range"));
+            return VXTexture();
+        }
+
+        std::vector<unsigned char> raw(size);
+        size_t totalRead = 0;
+        while (totalRead < size) {
+            ssize_t n = pread(fd, raw.data() + totalRead, size - totalRead,
+                              static_cast<off_t>(offset + totalRead));
+            if (n <= 0) {
+                SetLastError(VXError("CreateTextureFromFD: failed to read requested byte range from fd"));
+                return VXTexture();
+            }
+            totalRead += static_cast<size_t>(n);
+        }
+
+        return CreateTextureFromMemory(raw.data(), raw.size());
+    }
+
+    VXTexture VXRenderer::CreateTextureFromMemory(const uint8_t* data, size_t size) {
+        if (!data || size == 0) {
+            SetLastError(VXError("CreateTextureFromMemory: null buffer or zero size"));
+            return VXTexture();
+        }
+
+        int texWidth, texHeight, texChannels;
+        stbi_uc* pixels = stbi_load_from_memory(data, static_cast<int>(size),
+                                                &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        if (!pixels) {
+            SetLastError(VXError("CreateTextureFromMemory: failed to decode image from memory buffer"));
+            return VXTexture();
+        }
+
+        VXTexture texture = createTextureFromPixels(pixels, static_cast<uint32_t>(texWidth),
+                                                    static_cast<uint32_t>(texHeight));
+        stbi_image_free(pixels);
+        return texture;
+    }
+
+    VXTexture VXRenderer::CreateTextureFromMemory(const std::vector<uint8_t>& data) {
+        return CreateTextureFromMemory(data.data(), data.size());
+    }
+
+    void VXRenderer::BindMaterialTextures(VXMaterial& material) {
+        VkDevice device = m_graphics->Device();
+
+        if (material.GetDescriptorSet() == VK_NULL_HANDLE) {
+            VkDescriptorSetAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = m_materialDescriptorPool;
+            allocInfo.descriptorSetCount = 1;
+            allocInfo.pSetLayouts = &m_materialSetLayout;
+
+            VkDescriptorSet set;
+            vkAllocateDescriptorSets(device, &allocInfo, &set);
+            material.SetDescriptorSet(set);
+        }
+
+        VXTexture* albedo = material.GetAlbedo();
+        VXTexture* boundTexture = albedo ? albedo : &m_whiteTexture;
+
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = boundTexture->GetImageView();
+        imageInfo.sampler = boundTexture->GetSampler();
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = material.GetDescriptorSet();
+        write.dstBinding = 0;
+        write.dstArrayElement = 0;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
     void VXRenderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -385,6 +662,14 @@ namespace VX {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     dc.material->GetPipelineLayout(), 0, 1,
                                     &m_descriptorSets[m_currentFrame], 0, nullptr);
+
+            if (dc.material->GetDescriptorSet() != VK_NULL_HANDLE) {
+                VkDescriptorSet materialSet = dc.material->GetDescriptorSet();
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        dc.material->GetPipelineLayout(), 1, 1,
+                                        &materialSet, 0, nullptr);
+            }
+
             vkCmdPushConstants(cmd, dc.material->GetPipelineLayout(),
                                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, dc.transform);
             VkBuffer vertexBuffers[] = {dc.mesh->GetVertexBuffer()};
@@ -481,6 +766,17 @@ namespace VX {
         if (m_descriptorSetLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
 
+        if (m_defaultSampler != VK_NULL_HANDLE)
+            vkDestroySampler(device, m_defaultSampler, nullptr);
+
+        if (m_materialDescriptorPool != VK_NULL_HANDLE)
+            vkDestroyDescriptorPool(device, m_materialDescriptorPool, nullptr);
+
+        if (m_materialSetLayout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(device, m_materialSetLayout, nullptr);
+
+        m_whiteTexture.Destroy(device);
+
         for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             vkDestroySemaphore(device, m_imageAvailableSemaphores[i], nullptr);
 
@@ -513,6 +809,9 @@ namespace VX {
         m_commandPool = VK_NULL_HANDLE;
         m_descriptorPool = VK_NULL_HANDLE;
         m_descriptorSetLayout = VK_NULL_HANDLE;
+        m_defaultSampler = VK_NULL_HANDLE;
+        m_materialDescriptorPool = VK_NULL_HANDLE;
+        m_materialSetLayout = VK_NULL_HANDLE;
         m_depthImageView = VK_NULL_HANDLE;
         m_depthImage = VK_NULL_HANDLE;
         m_depthImageMemory = VK_NULL_HANDLE;
@@ -809,6 +1108,56 @@ namespace VX {
 
     void VXRenderer::updateUBO(const VXMat4& mvp) {
         memcpy(m_uboMapped[m_currentFrame], mvp.Data(), sizeof(VXMat4));
+    }
+
+    void VXRenderer::createMaterialSetLayout() {
+        VkDescriptorSetLayoutBinding albedoBinding{};
+        albedoBinding.binding = 0;
+        albedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        albedoBinding.descriptorCount = 1;
+        albedoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &albedoBinding;
+
+        vkCreateDescriptorSetLayout(m_graphics->Device(), &layoutInfo, nullptr, &m_materialSetLayout);
+    }
+
+    void VXRenderer::createMaterialDescriptorPool() {
+        constexpr uint32_t MAX_MATERIALS = 256;
+
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSize.descriptorCount = MAX_MATERIALS;
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = MAX_MATERIALS;
+
+        vkCreateDescriptorPool(m_graphics->Device(), &poolInfo, nullptr, &m_materialDescriptorPool);
+    }
+
+    void VXRenderer::createDefaultSampler() {
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.maxAnisotropy = 1.0f;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+        vkCreateSampler(m_graphics->Device(), &samplerInfo, nullptr, &m_defaultSampler);
     }
 
     void VXRenderer::SetCamera(const VXCamera& camera) {

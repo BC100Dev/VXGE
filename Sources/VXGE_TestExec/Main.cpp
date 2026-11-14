@@ -53,13 +53,13 @@ int main() {
         return 1;
     }
 
-    VX::VXWindow wnd = ctx.CreateWindow("VXGE Demo", monitors[0], VX::VXFlags::WINDOW_WINDOWED);
+    VX::VXWindow wnd = ctx.CreateWindow("VXGE Demo", 1280u, 720u, {VX::VXFlags::WINDOW_WINDOWED});
     if (!wnd.Populate()) {
         std::cerr << "Window creation failed: " << VX::GetLastError().what() << std::endl;
         return 1;
     }
 
-    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, graphicCards[0], VX::VXFlags::RENDERER_3D);
+    VX::VXRenderer renderer = ctx.CreateRenderer(wnd, graphicCards[0]);
     renderer.SetVSync(true);
     if (!renderer.Populate()) {
         std::cerr << "Renderer creation failed: " << VX::GetLastError().what() << std::endl;
@@ -67,36 +67,52 @@ int main() {
     }
 
     std::vector<VX::VXVertex> vertices = {
-        // apex
-        {{0.0f, 0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}}, // 0 - red
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
 
-        // base
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}}, // 1 - green
-        {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}}, // 2 - blue
-        {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 0.0f}}, // 3 - yellow
-        {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}, // 4 - magenta
+        {{0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
+
+        {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
+
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
+
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
     };
 
-    std::vector<uint32_t> indices = {
-        // 4 triangular side faces
-        0, 1, 2,
-        0, 2, 3,
-        0, 3, 4,
-        0, 4, 1,
-
-        // square base split into 2 triangles
-        1, 3, 2,
-        1, 4, 3,
-    };
+    std::vector<uint32_t> indices;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(vertices.size()); i++)
+        indices.push_back(i);
     VX::VXMesh pyramidMesh = renderer.CreateMesh(vertices, indices);
 
     fs::path vert = ExecutableDirectory() / "shaders" / "triangle.vert.spv";
     fs::path frag = ExecutableDirectory() / "shaders" / "triangle.frag.spv";
 
-    VX::VXMaterial pyramidMaterial = renderer.CreateMaterial(vert, frag, VX::VXFlags::CULL_NONE);
-    VX::VXMaterial carMaterial = renderer.CreateMaterial(vert, frag, VX::VXFlags::CULL_BACK);
+    VX::VXMaterial pyramidMaterial = renderer.CreateMaterial(vert, frag, {VX::VXFlags::CULL_NONE});
+    VX::VXMaterial carMaterial = renderer.CreateMaterial(vert, frag, {VX::VXFlags::CULL_BACK});
 
-    // test OBJ
+    VX::VXTexture checkerTexture = renderer.CreateTexture(ExecutableDirectory() / "textures" / "checker.png");
+    if (VX::GetLastError().Empty()) {
+        pyramidMaterial.SetAlbedo(&checkerTexture);
+        renderer.BindMaterialTextures(pyramidMaterial);
+    } else {
+        std::cerr << "Failed to load checker texture: " << VX::GetLastError().what() << std::endl;
+    }
+
+    renderer.BindMaterialTextures(carMaterial);
+
     VX::OBJModel carModel;
     std::vector<VX::VXMesh> carMeshes;
 
@@ -105,7 +121,6 @@ int main() {
     } else {
         for (auto& meshData : carModel.GetMeshes()) {
             for (auto& vertex : meshData.vertices) {
-                // antimatter looking ass car
                 vertex.color[0] = 1.0f;
                 vertex.color[1] = 1.0f;
                 vertex.color[2] = 1.0f;
@@ -129,7 +144,7 @@ int main() {
         3, 0, 0, 1
     };
 
-    float aspect = (float)monitors[0].Width() / (float)monitors[0].Height();
+    float aspect = (float)wnd.Width() / (float)wnd.Height();
     VX::VXCamera camera(75.0f, aspect, 0.1f, 100.0f);
     camera.SetPosition({0.0f, 0.0f, -5.0f});
 
@@ -215,6 +230,8 @@ int main() {
     pyramidMesh.Destroy(graphicCards[0].Device());
     for (auto& carMesh : carMeshes)
         carMesh.Destroy(graphicCards[0].Device());
+
+    checkerTexture.Destroy(graphicCards[0].Device());
 
     pyramidMaterial.Destroy(graphicCards[0].Device());
     carMaterial.Destroy(graphicCards[0].Device());

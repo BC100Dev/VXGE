@@ -4,8 +4,12 @@
 #include <VXGE/VXEvent.hpp>
 
 namespace VX {
-    VXWindow::VXWindow(const std::string& title, const VXMonitor& monitor, VXFlags flags)
+    VXWindow::VXWindow(const std::string& title, const VXMonitor& monitor, const std::vector<VXFlags>& flags)
         : m_title(title), m_width(monitor.Width()), m_height(monitor.Height()), m_flags(flags) {
+    }
+
+    VXWindow::VXWindow(const std::string& title, uint32_t width, uint32_t height, const std::vector<VXFlags>& flags)
+        : m_title(title), m_width(static_cast<int>(width)), m_height(static_cast<int>(height)), m_flags(flags) {
     }
 
     VXWindow::~VXWindow() {
@@ -16,11 +20,11 @@ namespace VX {
     bool VXWindow::Populate() {
         SDL_WindowFlags sdlFlags = SDL_WINDOW_VULKAN;
 
-        if (m_flags & VXFlags::WINDOW_FULLSCREEN)
+        if (HasFlag(m_flags, VXFlags::WINDOW_FULLSCREEN))
             sdlFlags |= SDL_WINDOW_FULLSCREEN;
-        if (m_flags & VXFlags::WINDOW_BORDERLESS)
+        if (HasFlag(m_flags, VXFlags::WINDOW_BORDERLESS))
             sdlFlags |= SDL_WINDOW_BORDERLESS;
-        if (!(m_flags & VXFlags::WINDOW_FULLSCREEN) && !(m_flags & VXFlags::WINDOW_BORDERLESS))
+        if (!HasFlag(m_flags, VXFlags::WINDOW_FULLSCREEN) && !HasFlag(m_flags, VXFlags::WINDOW_BORDERLESS))
             sdlFlags |= SDL_WINDOW_RESIZABLE;
 
         m_window = SDL_CreateWindow(m_title.c_str(), m_width, m_height, sdlFlags);

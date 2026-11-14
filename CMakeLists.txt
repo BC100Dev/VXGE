@@ -21,6 +21,10 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Include")
     include_directories("${CMAKE_CURRENT_SOURCE_DIR}/Include")
 endif ()
 
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/External/stb")
+    include_directories("${CMAKE_CURRENT_SOURCE_DIR}/External/stb")
+endif ()
+
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/External_Sources")
     file(GLOB EXTERNAL_SOURCE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/External_Sources/*")
     foreach (EXTERNAL_SOURCE_MODULE ${EXTERNAL_SOURCE_MODULES})

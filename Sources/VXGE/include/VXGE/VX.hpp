@@ -16,6 +16,7 @@
 #include "VXMonitor.hpp"
 #include "VXOverlay.hpp"
 #include "VXRenderer.hpp"
+#include "VXTexture.hpp"
 #include "VXWindow.hpp"
 
 #endif //VXGE_SHARED_HEADER
